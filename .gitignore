@@ -219,3 +219,14 @@ __marimo__/
 
 # Local AI tooling cache
 .atl/
+
+# Node.js and frontend builds
+node_modules/
+dist/
+*.tsbuildinfo
+
+# Operating system and editor files
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/

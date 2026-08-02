@@ -1,0 +1,1 @@
+"""Persistence abstraction boundary."""
