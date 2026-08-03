@@ -75,7 +75,49 @@ Set `VITE_API_BASE_URL` before building when the API is not available at `http:/
 
 ## Configuration
 
-Copy `.env.example` to `.env` to override Compose defaults. The checked-in values are development-only placeholders; never commit real credentials.
+Copy `.env.example` to the repository root as `.env` to override Docker Compose defaults. Compose consumes that root `.env` for variable interpolation and passes the resulting values to the API and worker containers. The checked-in values are development-only placeholders; never commit real credentials.
+
+For a backend started locally from `backend/`, Pydantic Settings reads an env file named `.env` relative to the process working directory, so use `backend/.env` (or export environment variables) for local backend settings. The root `.env` is not automatically loaded by that command.
+
+### Runtime reference
+
+| Variable | Meaning | Default |
+| --- | --- | --- |
+| `ENVIRONMENT` | `development`, `test`, `staging`, or `production` | `development` |
+| `DATABASE_URL` | PostgreSQL DSN; treated as a secret | local PostgreSQL DSN |
+| `REDIS_URL` | Redis DSN; treated as a secret | `redis://localhost:6379/0` |
+| `CELERY_BROKER_URL` / `CELERY_RESULT_BACKEND` | Celery Redis DSNs; treated as secrets | Redis databases `0` / `1` |
+| `LOG_LEVEL` | `DEBUG`, `INFO`, `WARNING`, `ERROR`, or `CRITICAL` | `INFO` |
+| `LOG_FORMAT` | `console` or `json` | `console` |
+| `CORS_ORIGINS` | Comma-separated allowed origins | `http://localhost:5173` |
+| `REPOSITORY_MAX_SIZE_BYTES` | Maximum repository size | `100000000` |
+| `REPOSITORY_MAX_FILE_COUNT` | Maximum repository file count | `50000` |
+| `ANALYSIS_TIMEOUT_SECONDS` | Analysis time limit | `300` |
+| `LLM_ENABLED` | Enables optional LLM enrichment | `false` |
+| `LLM_PROVIDER` / `LLM_MODEL` / `LLM_API_KEY` | LLM provider settings; API key is secret | unset |
+
+Production requires JSON logging, non-local service URLs, non-default database credentials, HTTPS-only non-wildcard CORS origins, and complete LLM settings when LLM configuration is supplied. LLM enrichment is disabled by default.
+
+### Request errors
+
+Each HTTP response carries `X-Correlation-ID`. A valid incoming value is retained; otherwise the API generates one. Structured access logs include the correlation ID, method, path, status, and duration.
+
+Errors use this stable envelope; `details` is optional:
+
+```json
+{
+  "error": {
+    "code": "request_validation_error",
+    "message": "Request validation failed.",
+    "correlation_id": "request-42",
+    "details": [
+      {"location": ["body", "name"], "message": "Field required", "type": "missing"}
+    ]
+  }
+}
+```
+
+Validation details omit rejected values and request bodies. Unexpected failures return the generic `internal_server_error` message and do not expose stack traces or secrets.
 
 ## Architecture
 

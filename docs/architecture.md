@@ -1,6 +1,6 @@
 # CodePilot Architecture
 
-CodePilot is a monorepo for an evidence-first code intelligence platform. The current implementation is a foundation: it provides API, worker, frontend, packaging, and container bootstraps. Repository ingestion, persistence, analysis, dashboards, GitHub integration, and AI enrichment are future phases.
+CodePilot is a monorepo for an evidence-first code intelligence platform. The current implementation is a foundation: it provides API, worker, frontend, packaging, container bootstraps, typed configuration, structured logging, request correlation, CORS, and stable API errors. Repository ingestion, persistence, analysis, dashboards, GitHub integration, and AI enrichment are future phases.
 
 > Status snapshot: 2026-08-03. "Reserved" below means that a package boundary exists, but its product behavior has not been implemented.
 
@@ -8,8 +8,10 @@ CodePilot is a monorepo for an evidence-first code intelligence platform. The cu
 
 | Area | Implemented baseline | Not implemented yet |
 |---|---|---|
-| Backend API | FastAPI application factory, `GET /health`, and `GET /api/v1/` discovery | Repository, analysis, finding, graph, risk, and integration endpoints |
-| Worker | Importable Celery application with environment-based Redis broker and result-backend URLs | Tasks, analysis orchestration, retries, and persisted task state |
+| Backend API | FastAPI application factory, `GET /health`, `GET /api/v1/` discovery, CORS, correlation middleware, and centralized error handlers | Repository, analysis, finding, graph, risk, and integration endpoints |
+| Configuration | Pydantic Settings with typed URLs, limits, logging, CORS, optional LLM settings, and production safeguards | Product-specific configuration and persistence settings |
+| Logging | Structlog through standard-library handlers with console or JSON rendering | Centralized telemetry and vendor integrations |
+| Worker | Importable Celery application using the shared settings for broker and result-backend URLs | Tasks, analysis orchestration, retries, and persisted task state |
 | Frontend | React/Vite landing page with a configurable link to the API documentation | Product dashboard, routing, API data flows, and analysis views |
 | Persistence | SQLAlchemy, async PostgreSQL, and Alembic dependencies are declared; Compose provisions PostgreSQL locally | Engine/session setup, models, repositories, and migrations |
 | Analysis | The `analyzers` boundary is reserved | Analyzer contracts, tools, metrics, findings, graphs, hotspots, and risk scoring |
@@ -67,7 +69,7 @@ The package names establish ownership without adding abstractions before they ha
 | Boundary | Current status | Responsibility as later phases are implemented |
 |---|---|---|
 | `api` | Implemented baseline | Own HTTP routing, transport schemas, request validation, and translation between HTTP and application services. It must not own business rules or access database plumbing directly. |
-| `core` | Reserved | Hold cross-cutting application concerns such as typed configuration, logging, correlation, and stable error handling. It must not become a miscellaneous business-logic package. |
+| `core` | Implemented baseline | Own typed configuration, logging, correlation middleware, and stable error handling. It must not become a miscellaneous business-logic package. |
 | `db` | Reserved | Own database engine, session, transaction, and migration plumbing. It must not expose persistence concerns to the domain. |
 | `domain` | Reserved | Define business concepts, invariants, value types, and state transitions without depending on FastAPI, Celery, SQLAlchemy, GitHub, or LLM providers. |
 | `repositories` | Reserved | Define persistence-facing contracts needed by services and their database-backed adapters. It translates between domain/application data and storage. |
@@ -79,7 +81,7 @@ The package names establish ownership without adding abstractions before they ha
 
 ## Dependency Direction
 
-Dependencies point from delivery and infrastructure code toward application behavior and the domain. The domain remains independent. The following is an intended dependency rule for future implementation, not a claim that these calls exist today.
+Dependencies point from delivery and infrastructure code toward application behavior and the domain. The domain remains independent. The following is the dependency rule for future implementation. Only the API-to-core and worker-to-core configuration/logging bootstrap paths are operational today; the service and adapter calls remain planned.
 
 ```mermaid
 flowchart TD
@@ -96,10 +98,10 @@ flowchart TD
 
     Core[core cross-cutting concerns] -. supports .-> API
     Core -. supports .-> Worker
-    Core -. supports .-> GitHub
-    Core -. supports .-> Repositories
-    Core -. supports .-> Analyzers
-    Core -. supports .-> LLM
+    Core -. supports future boundaries .-> GitHub
+    Core -. supports future boundaries .-> Repositories
+    Core -. supports future boundaries .-> Analyzers
+    Core -. supports future boundaries .-> LLM
 ```
 
 Practical rules:
@@ -111,6 +113,8 @@ Practical rules:
 - `llm` is an outbound adapter behind a gateway. Disabling it must leave the deterministic product functional.
 - The frontend communicates through the public API contract only; it does not access backend internals or infrastructure services.
 - Direct shortcuts such as `api -> db`, `domain -> FastAPI`, or `analyzers -> llm` violate the intended direction.
+
+The implemented `core` concerns support entry points and must remain cross-cutting: settings are consumed by both API and worker bootstraps, logging is configured at process startup, and correlation/error handling stays at the HTTP boundary. Core must not import domain or product-specific services.
 
 ## Planned Analysis Flow
 
@@ -128,6 +132,28 @@ This flow is directional guidance only. At the current baseline, none of these p
 
 ## Architectural Invariants
 
+- Every HTTP response includes an `X-Correlation-ID`; error bodies use the stable `{ "error": { "code", "message", "correlation_id", "details"? } }` envelope.
+- Settings represent DSNs and API keys with `SecretStr`; configuration validation hides input values, and secrets are not rendered in settings representations or structured logs.
+- Validation errors expose locations, messages, and types, but omit rejected values and request bodies. Unexpected errors expose a generic message, never stack traces or private exception text.
+- Production configuration requires JSON logs, non-local DSNs, non-default database credentials, HTTPS-only non-wildcard CORS origins, and complete LLM settings when LLM configuration is present.
+
+The public validation-error shape is:
+
+```json
+{
+  "error": {
+    "code": "request_validation_error",
+    "message": "Request validation failed.",
+    "correlation_id": "request-42",
+    "details": [
+      {"location": ["body", "name"], "message": "Field required", "type": "missing"}
+    ]
+  }
+}
+```
+
+`details` is omitted when there are no safe details, and oversized details are bounded rather than emitted without limit.
+
 - Deterministic analysis is the source of truth. See [ADR 0001](adr/0001-deterministic-analysis-before-ai.md).
 - The platform must remain useful when no LLM is configured.
 - Repository content is untrusted and must not be executed as part of ingestion or analysis.
@@ -135,6 +161,12 @@ This flow is directional guidance only. At the current baseline, none of these p
 - Expensive work and large responses must be bounded for safety and predictable operation.
 - External systems remain behind dedicated boundaries so domain and application behavior can be tested without network access.
 - New abstractions should follow a demonstrated use case, not merely the reserved package layout.
+
+## Implemented Versus Future
+
+The baseline currently validates process configuration, configures Structlog console/JSON output, adds CORS and correlation headers, records structured request access fields, and normalizes validation, HTTP, application, and unexpected errors. Celery shares the same typed broker and result-backend settings.
+
+It does not yet persist application data, enqueue CodePilot tasks, ingest repositories, run analyzers, call an LLM, contact GitHub, or provide authentication or telemetry. Those capabilities belong to later phases and must not be inferred from the reserved package boundaries.
 
 ## Evolution Guide
 

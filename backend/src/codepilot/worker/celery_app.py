@@ -1,19 +1,20 @@
 """Celery application bootstrap."""
 
-import os
-
 from celery import Celery
+
+from codepilot.core.settings import Settings
 
 DEFAULT_BROKER_URL = "redis://localhost:6379/0"
 DEFAULT_RESULT_BACKEND = "redis://localhost:6379/1"
 
 
-def create_celery_app() -> Celery:
-    """Create a Celery application from process environment configuration."""
+def create_celery_app(settings: Settings | None = None) -> Celery:
+    """Create a Celery application from the shared settings."""
+    resolved_settings = settings or Settings()
     return Celery(
         "codepilot",
-        broker=os.getenv("CELERY_BROKER_URL", DEFAULT_BROKER_URL),
-        backend=os.getenv("CELERY_RESULT_BACKEND", DEFAULT_RESULT_BACKEND),
+        broker=resolved_settings.celery_broker_url_value(),
+        backend=resolved_settings.celery_result_backend_value(),
     )
 
 
