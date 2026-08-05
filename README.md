@@ -73,6 +73,8 @@ npm run dev
 
 Set `VITE_API_BASE_URL` before building when the API is not available at `http://localhost:8000`.
 
+The dashboard uses hash-based navigation so it can be served as static Vite output without a router server. To capture a local screenshot for review, run `npm run dev`, open the dashboard, submit a public HTTPS repository, and capture the overview after the API reports a completed analysis. Empty states are intentional when an endpoint has not returned evidence; the UI does not fabricate production metrics.
+
 ## Configuration
 
 Copy `.env.example` to the repository root as `.env` to override Docker Compose defaults. Compose consumes that root `.env` for variable interpolation and passes the resulting values to the API and worker containers. The checked-in values are development-only placeholders; never commit real credentials.
