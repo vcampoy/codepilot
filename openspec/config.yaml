@@ -2,29 +2,42 @@ schema: spec-driven
 
 context: |
   Project: codepilot
-  Detected stack: documentation-first repo; no application manifests or source code were found.
-  Architecture: no executable architecture detected yet.
-  Testing: no test runner, coverage, linter, formatter, or type checker detected.
-  Style: Markdown-heavy repository with a Python-oriented .gitignore.
+  Stack: Python 3.13 FastAPI/Celery backend; React 19, TypeScript, and Vite frontend.
+  Runtime: Docker Compose orchestrates API, worker, PostgreSQL, Redis, and static frontend.
+  Architecture: layered backend boundaries with deterministic analysis as the source of truth.
+  Testing: pytest unit/integration coverage; Ruff, Mypy, and frontend TypeScript/Vite build checks.
+  Style: English Markdown; 4-space Python, 2-space frontend; strict typing and explicit boundaries.
 
 strict_tdd: false
 
+artifact_store: openspec
+
+workflow:
+  execution_mode: interactive
+  chained_pr_strategy: ask-always
+  review_budget_lines: 400
+
 testing:
-  detected: 2026-08-02
+  detected: 2026-08-03
   test_runner:
-    command: ""
-    framework: none
+    command: "python -m pytest"
+    framework: pytest
   layers:
-    unit: false
-    integration: false
+    unit: true
+    integration: true
     e2e: false
   coverage:
     available: false
     command: ""
   quality_tools:
+    linter: "ruff check ."
+    type_checker: "mypy"
+    formatter: "ruff format --check ."
+  frontend:
+    build_and_type_check: "npm run build"
     linter: ""
-    type_checker: ""
     formatter: ""
+    e2e: ""
 
 rules:
   proposal:
@@ -38,12 +51,15 @@ rules:
     - Group by phase, use hierarchical numbering
     - Keep tasks completable in one session
   apply:
-    - Follow existing code patterns
-    - tdd: false
-    - test_command: ""
+    rules:
+      - Follow existing code patterns
+      - Use RED-GREEN-REFACTOR when strict_tdd is enabled
+      - Keep deterministic analysis authoritative over optional AI enrichment
+    tdd: false
+    test_command: "python -m pytest"
   verify:
-    - test_command: ""
-    - build_command: ""
-    - coverage_threshold: 0
+    test_command: "python -m pytest"
+    build_command: "npm run build"
+    coverage_threshold: 0
   archive:
     - Warn before merging destructive deltas
