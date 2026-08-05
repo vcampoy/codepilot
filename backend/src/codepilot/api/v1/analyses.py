@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import shutil
 from typing import cast
 from uuid import UUID
 
@@ -46,6 +47,14 @@ class AnalysisSummaryResponse(BaseModel):
     summary: dict[str, object] | None
 
 
+class AnalyzerAvailabilityResponse(BaseModel):
+    """Availability of supported external analyzers on this worker image."""
+
+    analyzer: str
+    status: str
+    tool: str
+
+
 @router.post("", status_code=status.HTTP_202_ACCEPTED, response_model=AnalysisAcceptedResponse)
 async def request_analysis(
     payload: AnalysisRequest, request: Request
@@ -63,6 +72,25 @@ async def request_analysis(
         analysis_id=record.analysis_id,
         status=record.status.value,
     )
+
+
+@router.get("/analyzers/availability", response_model=list[AnalyzerAvailabilityResponse])
+async def analyzer_availability() -> list[AnalyzerAvailabilityResponse]:
+    """Report whether optional external analyzer executables are installed."""
+    return [
+        AnalyzerAvailabilityResponse(
+            analyzer=analyzer,
+            status="available" if shutil.which(tool) else "skipped",
+            tool=tool,
+        )
+        for analyzer, tool in (
+            ("python.ruff", "ruff"),
+            ("python.bandit", "bandit"),
+            ("python.radon", "radon"),
+            ("javascript.eslint", "eslint"),
+            ("sarif.import", "uploaded-artifact"),
+        )
+    ]
 
 
 @router.get("/{analysis_id}", response_model=AnalysisStatusResponse)

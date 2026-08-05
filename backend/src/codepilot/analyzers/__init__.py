@@ -2,6 +2,7 @@
 
 from codepilot.analyzers.framework import (
     AnalyzerContext,
+    AnalyzerExecution,
     AnalyzerMetadata,
     AnalyzerRegistry,
     AnalyzerResult,
@@ -11,6 +12,7 @@ from codepilot.analyzers.framework import (
 
 __all__ = [
     "AnalyzerContext",
+    "AnalyzerExecution",
     "AnalyzerMetadata",
     "AnalyzerRegistry",
     "AnalyzerResult",
