@@ -9,6 +9,12 @@ from codepilot.analyzers.framework import (
     DeterministicAnalyzerOrchestrator,
     NormalizedFinding,
 )
+from codepilot.analyzers.git_history import (
+    FileHistoryMetric,
+    GitHistoryConfig,
+    GitHistoryMetrics,
+    GitHistoryService,
+)
 
 __all__ = [
     "AnalyzerContext",
@@ -18,4 +24,8 @@ __all__ = [
     "AnalyzerResult",
     "DeterministicAnalyzerOrchestrator",
     "NormalizedFinding",
+    "FileHistoryMetric",
+    "GitHistoryConfig",
+    "GitHistoryMetrics",
+    "GitHistoryService",
 ]
