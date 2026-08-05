@@ -69,6 +69,19 @@ class AnalyzerMetrics:
     files_analyzed: int = 0
     source_lines: int = 0
     excluded_files: int = 0
+    cyclomatic_complexity: int = 0
+    maintainability_index: float | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class AnalyzerExecution:
+    """Tool execution metadata and availability state."""
+
+    tool: str
+    version: str | None
+    duration_seconds: float
+    available: bool
+    message: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -77,6 +90,7 @@ class AnalyzerResult:
 
     findings: tuple[NormalizedFinding, ...] = ()
     metrics: AnalyzerMetrics = field(default_factory=AnalyzerMetrics)
+    execution: AnalyzerExecution | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -121,6 +135,7 @@ class AnalyzerRun:
     findings: tuple[NormalizedFinding, ...] = ()
     metrics: AnalyzerMetrics = field(default_factory=AnalyzerMetrics)
     failures: tuple[AnalyzerFailure, ...] = ()
+    executions: tuple[AnalyzerExecution, ...] = ()
 
 
 class DeterministicAnalyzerOrchestrator:
@@ -136,6 +151,7 @@ class DeterministicAnalyzerOrchestrator:
         findings: list[NormalizedFinding] = []
         failures: list[AnalyzerFailure] = []
         metrics = AnalyzerMetrics()
+        executions: list[AnalyzerExecution] = []
         for analyzer in self._registry:
             try:
                 result = await asyncio.wait_for(
@@ -161,14 +177,24 @@ class DeterministicAnalyzerOrchestrator:
                 )
                 continue
             findings.extend(result.findings)
+            if result.execution is not None:
+                executions.append(result.execution)
             metrics = AnalyzerMetrics(
                 files_analyzed=metrics.files_analyzed + result.metrics.files_analyzed,
                 source_lines=metrics.source_lines + result.metrics.source_lines,
                 excluded_files=metrics.excluded_files + result.metrics.excluded_files,
+                cyclomatic_complexity=metrics.cyclomatic_complexity
+                + result.metrics.cyclomatic_complexity,
+                maintainability_index=(
+                    result.metrics.maintainability_index
+                    if result.metrics.maintainability_index is not None
+                    else metrics.maintainability_index
+                ),
             )
         unique_findings = {finding.fingerprint: finding for finding in findings}
         return AnalyzerRun(
             findings=tuple(unique_findings[key] for key in sorted(unique_findings)),
             metrics=metrics,
             failures=tuple(sorted(failures, key=lambda failure: failure.analyzer)),
+            executions=tuple(executions),
         )
