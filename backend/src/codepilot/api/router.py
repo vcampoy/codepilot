@@ -13,4 +13,16 @@ async def health() -> dict[str, str]:
     return {"status": "ok"}
 
 
+@router.get("/health/live", tags=["health"])
+async def liveness() -> dict[str, str]:
+    """Kubernetes-style process liveness probe."""
+    return {"status": "ok"}
+
+
+@router.get("/health/ready", tags=["health"])
+async def readiness() -> dict[str, str]:
+    """Readiness probe for the configured application process."""
+    return {"status": "ok"}
+
+
 router.include_router(v1_router, prefix="/api/v1")

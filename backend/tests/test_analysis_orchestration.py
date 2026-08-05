@@ -128,9 +128,7 @@ def test_request_persists_queued_analysis_and_enqueues_only_id() -> None:
     async def run() -> tuple[AnalysisStatus, str, list[UUID], UUID]:
         repository = InMemoryAnalysisRepository()
         queue = RecordingQueue([])
-        service = AnalysisService(
-            repository, FakeIngestion(make_snapshot()), FakeAnalyzer(), queue
-        )
+        service = AnalysisService(repository, FakeIngestion(make_snapshot()), FakeAnalyzer(), queue)
         record = await service.request_analysis("https://github.com/example/project.git")
         return record.status, record.repository_url, queue.analysis_ids, record.analysis_id
 
@@ -185,8 +183,7 @@ def test_finding_persistence_is_idempotent_by_deterministic_fingerprint() -> Non
             == 1
         )
         assert (
-            await repository.persist_findings(record.analysis_id, [finding], lease_token=token)
-            == 0
+            await repository.persist_findings(record.analysis_id, [finding], lease_token=token) == 0
         )
         return await repository.get_findings(record.analysis_id)
 
@@ -379,9 +376,7 @@ def test_enqueue_failure_persists_terminal_safe_failure() -> None:
     async def run() -> tuple[AnalysisStatus, str | None]:
         repository = InMemoryAnalysisRepository()
         queue = FailingQueue()
-        service = AnalysisService(
-            repository, FakeIngestion(make_snapshot()), FakeAnalyzer(), queue
-        )
+        service = AnalysisService(repository, FakeIngestion(make_snapshot()), FakeAnalyzer(), queue)
         with pytest.raises(AnalysisEnqueueError):
             await service.request_analysis("https://github.com/example/project.git")
         assert queue.analysis_id is not None
@@ -516,9 +511,7 @@ def test_stale_running_analysis_is_reclaimed_atomically() -> None:
         first_claim = await repository.claim_running(
             record.analysis_id, now=started, lease_seconds=10
         )
-        reclaimed = await repository.recover_stale_running(
-            now=started + timedelta(seconds=11)
-        )
+        reclaimed = await repository.recover_stale_running(now=started + timedelta(seconds=11))
         second_claim = await repository.claim_running(
             record.analysis_id,
             now=started + timedelta(seconds=11),
@@ -546,15 +539,16 @@ def test_heartbeat_prevents_active_analysis_from_being_reclaimed() -> None:
         token = await repository.claim_running(record.analysis_id, now=started, lease_seconds=10)
         assert token is not None
 
-        assert await repository.heartbeat(
-            record.analysis_id,
-            now=started + timedelta(seconds=5),
-            lease_seconds=10,
-            lease_token=token,
-        ) is True
-        return await repository.recover_stale_running(
-            now=started + timedelta(seconds=11)
+        assert (
+            await repository.heartbeat(
+                record.analysis_id,
+                now=started + timedelta(seconds=5),
+                lease_seconds=10,
+                lease_token=token,
+            )
+            is True
         )
+        return await repository.recover_stale_running(now=started + timedelta(seconds=11))
 
     assert asyncio.run(run()) == 0
 

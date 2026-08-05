@@ -16,6 +16,8 @@ Once the services are healthy:
 | --- | --- |
 | Frontend | <http://localhost:5173> |
 | API health | <http://localhost:8000/health> |
+| API liveness | <http://localhost:8000/health/live> |
+| API readiness | <http://localhost:8000/health/ready> |
 | API v1 | <http://localhost:8000/api/v1/> |
 | API documentation | <http://localhost:8000/docs> |
 
@@ -31,7 +33,7 @@ docs/               Architecture documentation and decision records
 prompts/             Ordered delivery prompts for the public MVP
 ```
 
-The current phase establishes executable foundations only. Persistence, repository ingestion, analyzers, AI enrichment, and GitHub integration are intentionally deferred to the phases in [`ROADMAP.md`](ROADMAP.md).
+The repository contains the ordered MVP phases in [`prompts/`](prompts/). Review the honest release limitations in [`docs/mvp-gap-analysis.md`](docs/mvp-gap-analysis.md) before deploying publicly.
 
 ## Local development
 
@@ -97,8 +99,13 @@ For a backend started locally from `backend/`, Pydantic Settings reads an env fi
 | `ANALYSIS_TIMEOUT_SECONDS` | Analysis time limit | `300` |
 | `LLM_ENABLED` | Enables optional LLM enrichment | `false` |
 | `LLM_PROVIDER` / `LLM_MODEL` / `LLM_API_KEY` | LLM provider settings; API key is secret | unset |
+| `AUTH_REQUIRED` / `AUTH_API_KEY` | Minimal public API-key authentication | `false` / unset |
+| `RATE_LIMIT_REQUESTS` / `RATE_LIMIT_WINDOW_SECONDS` | In-process public request limit | `120` / `60` |
+| `WORKSPACE_ANALYSIS_QUOTA` | Accepted analyses per workspace | `100` |
+| `GITHUB_ENABLED` / `GITHUB_APP_ID` | Optional GitHub App integration | `false` / unset |
+| `OBSERVABILITY_ENABLED` / `ERROR_REPORTING_DSN` | Optional traces and error reporting | `false` / unset |
 
-Production requires JSON logging, non-local service URLs, non-default database credentials, HTTPS-only non-wildcard CORS origins, and complete LLM settings when LLM configuration is supplied. LLM enrichment is disabled by default.
+Production requires JSON logging, non-local service URLs, non-default database credentials, HTTPS-only non-wildcard CORS origins, API-key authentication, and complete LLM settings when LLM configuration is supplied. LLM enrichment and GitHub integration are disabled by default. See [`docs/deployment.md`](docs/deployment.md) and [`SECURITY.md`](SECURITY.md).
 
 ### Request errors
 

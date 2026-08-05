@@ -65,6 +65,7 @@ class AnalysisRecord:
 
     analysis_id: UUID
     repository_url: str
+    workspace_id: str = "default"
     status: AnalysisStatus = AnalysisStatus.QUEUED
     commit_sha: str | None = None
     summary: AnalysisSummary | None = None
@@ -88,9 +89,6 @@ _FINGERPRINT_FIELDS: Final[tuple[str, ...]] = (
 
 def fingerprint_finding(finding: AnalysisFinding) -> str:
     """Return a stable digest for the logical identity of a finding."""
-    values = {
-        field: getattr(finding, field)
-        for field in _FINGERPRINT_FIELDS
-    }
+    values = {field: getattr(finding, field) for field in _FINGERPRINT_FIELDS}
     canonical = json.dumps(values, sort_keys=True, separators=(",", ":"))
     return sha256(canonical.encode("utf-8")).hexdigest()

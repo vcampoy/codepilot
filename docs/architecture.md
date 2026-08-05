@@ -2,7 +2,7 @@
 
 CodePilot is a monorepo for an evidence-first code intelligence platform. The current implementation is a foundation: it provides API, worker, frontend, packaging, container bootstraps, typed configuration, structured logging, request correlation, CORS, and stable API errors. Repository ingestion, persistence, analysis, dashboards, GitHub integration, and AI enrichment are future phases.
 
-> Status snapshot: 2026-08-03. "Reserved" below means that a package boundary exists, but its product behavior has not been implemented.
+> Status snapshot: 2026-08-05. The original foundation snapshot below is historical. Current implementation status and release limitations are recorded in the hardening section at the end and [`mvp-gap-analysis.md`](mvp-gap-analysis.md).
 
 ## Architecture At A Glance
 
@@ -177,3 +177,9 @@ Before promoting a reserved boundary to implemented status:
 - Add tests at the narrowest useful boundary.
 - Update this status snapshot to distinguish newly operational behavior from deferred work.
 - Keep externally observable contracts and deterministic evidence explicit.
+
+## Public MVP implementation status
+
+The later phases now provide PostgreSQL-backed analysis state, deterministic analyzer outputs, a typed React dashboard, an evidence-bound optional LLM gateway, and a dedicated GitHub App/webhook/Checks boundary. Tenant-owned analysis records carry a `workspace_id`; production API access requires `AUTH_REQUIRED=true` and `AUTH_API_KEY`, while local development keeps authentication disabled by default.
+
+The API adds liveness/readiness probes, conservative security headers, an in-process sliding-window rate limiter, workspace analysis quotas, optional OpenTelemetry/Sentry hooks, and signed GitHub webhook replay protection. Application containers run as non-root where practical and Compose drops capabilities for application services. These are single-instance MVP protections; shared rate/quota/replay stores and a complete account system remain explicitly deferred in [`mvp-gap-analysis.md`](mvp-gap-analysis.md).

@@ -19,6 +19,13 @@ from codepilot.core.errors import (
 )
 from codepilot.core.logging import configure_logging
 from codepilot.core.middleware import CorrelationMiddleware
+from codepilot.core.observability import OpenTelemetryMiddleware, configure_error_reporting
+from codepilot.core.rate_limit import (
+    RequestRateLimitMiddleware,
+    SlidingWindowRateLimiter,
+    WorkspaceQuota,
+)
+from codepilot.core.security import SecurityHeadersMiddleware
 from codepilot.core.settings import Settings, get_settings
 from codepilot.github.contracts import GitHubWebhookEvent
 from codepilot.github.webhooks import GitHubWebhookService, InMemoryWebhookEventStore
@@ -57,6 +64,9 @@ def create_app(
     """Create an independently configured FastAPI application."""
     resolved_settings = settings if settings is not None else get_settings()
     configure_logging(resolved_settings)
+    configure_error_reporting(
+        resolved_settings.error_reporting_dsn_value(), resolved_settings.environment
+    )
     application = FastAPI(
         title="CodePilot API",
         description="Deterministic code intelligence services for CodePilot.",
@@ -64,6 +74,12 @@ def create_app(
         lifespan=lifespan,
     )
     application.state.settings = resolved_settings
+    rate_limiter = SlidingWindowRateLimiter(
+        resolved_settings.rate_limit_requests,
+        resolved_settings.rate_limit_window_seconds,
+    )
+    application.state.rate_limiter = rate_limiter
+    application.state.workspace_quota = WorkspaceQuota(resolved_settings.workspace_analysis_quota)
     owns_analysis_repository = analysis_service is None
     analysis_repository: Any
     resolved_analysis_service: AnalysisService
@@ -106,6 +122,13 @@ def create_app(
     application.add_exception_handler(StarletteHTTPException, cast(Any, http_exception_handler))
     application.add_exception_handler(Exception, unexpected_exception_handler)
     application.include_router(router)
+    application.add_middleware(RequestRateLimitMiddleware, limiter=rate_limiter)
+    application.add_middleware(SecurityHeadersMiddleware)
+    application.add_middleware(
+        OpenTelemetryMiddleware,
+        enabled=resolved_settings.observability_enabled,
+        service_name=resolved_settings.otel_service_name,
+    )
     return application
 
 

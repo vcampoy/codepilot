@@ -84,9 +84,7 @@ class GitHubClient:
             raise GitHubApiError("GitHub returned an invalid repository response.")
         return response.payload
 
-    async def get_pull_diff(
-        self, repository: str, pull_request_number: int, *, token: str
-    ) -> str:
+    async def get_pull_diff(self, repository: str, pull_request_number: int, *, token: str) -> str:
         response = await self._request(
             "GET",
             f"/repos/{repository}/pulls/{pull_request_number}",

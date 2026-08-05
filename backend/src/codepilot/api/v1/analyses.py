@@ -9,6 +9,7 @@ from uuid import UUID
 from fastapi import APIRouter, Request, status
 from pydantic import BaseModel, Field
 
+from codepilot.core.auth import authenticate
 from codepilot.core.errors import ApplicationError
 from codepilot.domain.analysis import AnalysisNotFoundError, AnalysisRecord
 from codepilot.llm.contracts import EnrichmentResult, EnrichmentTask, LlmError
@@ -61,12 +62,17 @@ class AnalyzerAvailabilityResponse(BaseModel):
 
 
 @router.post("", status_code=status.HTTP_202_ACCEPTED, response_model=AnalysisAcceptedResponse)
-async def request_analysis(
-    payload: AnalysisRequest, request: Request
-) -> AnalysisAcceptedResponse:
+async def request_analysis(payload: AnalysisRequest, request: Request) -> AnalysisAcceptedResponse:
     service = _service(request)
+    identity = authenticate(request)
+    if not await request.app.state.workspace_quota.consume(identity.workspace_id):
+        raise ApplicationError(
+            "workspace_quota_exceeded",
+            "The workspace analysis quota has been reached.",
+            status_code=429,
+        )
     try:
-        record = await service.request_analysis(payload.repository_url)
+        record = await service.request_analysis(payload.repository_url, identity.workspace_id)
     except AnalysisEnqueueError as error:
         raise ApplicationError(
             "analysis_enqueue_failed",
@@ -136,9 +142,7 @@ async def analysis_status(analysis_id: UUID, request: Request) -> AnalysisStatus
 
 
 @router.get("/{analysis_id}/summary", response_model=AnalysisSummaryResponse)
-async def analysis_summary(
-    analysis_id: UUID, request: Request
-) -> AnalysisSummaryResponse:
+async def analysis_summary(analysis_id: UUID, request: Request) -> AnalysisSummaryResponse:
     record = await _get_record(request, analysis_id)
     summary = record.summary
     return AnalysisSummaryResponse(
@@ -162,8 +166,9 @@ def _service(request: Request) -> AnalysisService:
 
 
 async def _get_record(request: Request, analysis_id: UUID) -> AnalysisRecord:
+    identity = authenticate(request)
     try:
-        return await _service(request).get_analysis(analysis_id)
+        return await _service(request).get_analysis(analysis_id, identity.workspace_id)
     except AnalysisNotFoundError as error:
         raise ApplicationError(
             "analysis_not_found", "Analysis was not found.", status_code=404

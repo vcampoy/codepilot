@@ -76,9 +76,7 @@ class QualityGateResult:
     failures: tuple[QualityGateFailure, ...]
 
 
-def calculate_risk(
-    components: Mapping[str, float], config: RiskScoreConfig
-) -> RiskAssessment:
+def calculate_risk(components: Mapping[str, float], config: RiskScoreConfig) -> RiskAssessment:
     normalized = {
         name: round(min(max(float(value), 0.0), 1.0), 4)
         for name, value in components.items()
@@ -133,8 +131,7 @@ def evaluate_quality_gates(
         failures.append(
             QualityGateFailure(
                 "hotspots",
-                f"{new_hotspot_count} new hotspots exceed the limit of "
-                f"{config.max_new_hotspots}.",
+                f"{new_hotspot_count} new hotspots exceed the limit of {config.max_new_hotspots}.",
             )
         )
     del hotspot_count

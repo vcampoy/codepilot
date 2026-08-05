@@ -346,16 +346,13 @@ class PublicHttpsRepositoryUrlValidator:
         else:
             if _is_unsafe_address(normalized_hostname):
                 raise PrivateRepositoryTargetError()
-        if (
-            normalized_hostname == "localhost"
-            or normalized_hostname.endswith(_UNSAFE_HOSTNAME_SUFFIXES)
+        if normalized_hostname == "localhost" or normalized_hostname.endswith(
+            _UNSAFE_HOSTNAME_SUFFIXES
         ):
             raise PrivateRepositoryTargetError()
 
         try:
-            addresses = tuple(
-                await asyncio.to_thread(self._resolve_addresses, normalized_hostname)
-            )
+            addresses = tuple(await asyncio.to_thread(self._resolve_addresses, normalized_hostname))
         except RepositoryIngestionError:
             raise
         except OSError as error:
@@ -511,9 +508,7 @@ class SubprocessGitClient:
             "http.sslVerify=true",
         )
         for address in target.addresses:
-            arguments.extend(
-                ["-c", f"http.curloptResolve={target.hostname}:443:{address}"]
-            )
+            arguments.extend(["-c", f"http.curloptResolve={target.hostname}:443:{address}"])
         arguments.extend(
             [
                 "clone",
@@ -719,9 +714,7 @@ class SubprocessGitClient:
             raise RepositoryProcessTerminationError()
 
 
-async def _terminate_process_tree(
-    process: asyncio.subprocess.Process, *, force: bool
-) -> None:
+async def _terminate_process_tree(process: asyncio.subprocess.Process, *, force: bool) -> None:
     if process.returncode is not None:
         return
     if os.name == "nt":
@@ -793,9 +786,7 @@ async def _create_git_process(
     )
 
 
-async def _read_bounded_stdout(
-    process: asyncio.subprocess.Process, maximum_bytes: int
-) -> bytes:
+async def _read_bounded_stdout(process: asyncio.subprocess.Process, maximum_bytes: int) -> bytes:
     if process.stdout is None:
         return b""
     chunks: list[bytes] = []

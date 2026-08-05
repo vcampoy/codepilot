@@ -92,10 +92,7 @@ def compare_pull_request(
     )
     new_hotspots = tuple(sorted(set(current_hotspot_paths) - set(baseline_hotspot_paths)))
     gate = evaluate_quality_gates(
-        tuple(
-            FindingRisk(finding.finding_id, finding.severity, True)
-            for finding in new_findings
-        ),
+        tuple(FindingRisk(finding.finding_id, finding.severity, True) for finding in new_findings),
         risk_score=current_risk,
         hotspot_count=len(current_hotspot_paths),
         new_hotspot_count=len(new_hotspots),

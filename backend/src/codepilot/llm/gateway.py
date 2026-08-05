@@ -91,9 +91,7 @@ class LiteLlmGateway:
         self, task: EnrichmentTask, evidence: DeterministicEvidence
     ) -> EnrichmentResult:
         last_error: Exception | None = None
-        models = tuple(
-            dict.fromkeys((*self._models_by_task.get(task, ()), *self._models))
-        )
+        models = tuple(dict.fromkeys((*self._models_by_task.get(task, ()), *self._models)))
         for model in models:
             request = build_prompt(
                 task,
@@ -225,9 +223,9 @@ def _output_model(task: EnrichmentTask) -> type[BaseModel]:
     return cast(
         type[BaseModel],
         {
-        EnrichmentTask.FILE_RISK: ExplanationOutput,
-        EnrichmentTask.REFACTORING_PLAN: RefactoringPlanOutput,
-        EnrichmentTask.DETERMINISTIC_SUMMARY: DeterministicSummaryOutput,
+            EnrichmentTask.FILE_RISK: ExplanationOutput,
+            EnrichmentTask.REFACTORING_PLAN: RefactoringPlanOutput,
+            EnrichmentTask.DETERMINISTIC_SUMMARY: DeterministicSummaryOutput,
         }[task],
     )
 
@@ -254,9 +252,7 @@ def _normalize_completion(raw: Any, model: str, provider: str) -> ProviderComple
     first = choices[0]
     message = first.get("message") if isinstance(first, dict) else getattr(first, "message", None)
     content = (
-        message.get("content")
-        if isinstance(message, dict)
-        else getattr(message, "content", None)
+        message.get("content") if isinstance(message, dict) else getattr(message, "content", None)
     )
     usage_raw = raw.get("usage") if isinstance(raw, dict) else getattr(raw, "usage", None)
     usage = _normalize_usage(usage_raw)

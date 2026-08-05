@@ -1,5 +1,11 @@
 name: codepilot
 
+x-runtime-hardening: &runtime-hardening
+  cap_drop:
+    - ALL
+  security_opt:
+    - no-new-privileges:true
+
 services:
   postgres:
     image: postgres:17-alpine
@@ -37,6 +43,7 @@ services:
         condition: service_healthy
 
   api:
+    <<: *runtime-hardening
     build:
       context: ./backend
     environment:
@@ -51,6 +58,18 @@ services:
       REPOSITORY_MAX_SIZE_BYTES: ${REPOSITORY_MAX_SIZE_BYTES:-100000000}
       REPOSITORY_MAX_FILE_COUNT: ${REPOSITORY_MAX_FILE_COUNT:-50000}
       ANALYSIS_TIMEOUT_SECONDS: ${ANALYSIS_TIMEOUT_SECONDS:-300}
+      AUTH_REQUIRED: ${AUTH_REQUIRED:-false}
+      AUTH_API_KEY: ${AUTH_API_KEY:-}
+      RATE_LIMIT_REQUESTS: ${RATE_LIMIT_REQUESTS:-120}
+      RATE_LIMIT_WINDOW_SECONDS: ${RATE_LIMIT_WINDOW_SECONDS:-60}
+      WORKSPACE_ANALYSIS_QUOTA: ${WORKSPACE_ANALYSIS_QUOTA:-100}
+      GITHUB_ENABLED: ${GITHUB_ENABLED:-false}
+      GITHUB_APP_ID: ${GITHUB_APP_ID:-}
+      GITHUB_PRIVATE_KEY: ${GITHUB_PRIVATE_KEY:-}
+      GITHUB_WEBHOOK_SECRET: ${GITHUB_WEBHOOK_SECRET:-}
+      OBSERVABILITY_ENABLED: ${OBSERVABILITY_ENABLED:-false}
+      OTEL_SERVICE_NAME: ${OTEL_SERVICE_NAME:-codepilot-api}
+      ERROR_REPORTING_DSN: ${ERROR_REPORTING_DSN:-}
       LLM_ENABLED: ${LLM_ENABLED:-false}
       LLM_PROVIDER: ${LLM_PROVIDER:-}
       LLM_MODEL: ${LLM_MODEL:-}
@@ -66,6 +85,7 @@ services:
         condition: service_healthy
 
   worker:
+    <<: *runtime-hardening
     build:
       context: ./backend
     command: celery -A codepilot.worker.celery_app:celery_app worker --loglevel=INFO
@@ -95,6 +115,7 @@ services:
         condition: service_healthy
 
   beat:
+    <<: *runtime-hardening
     build:
       context: ./backend
     command: celery -A codepilot.worker.celery_app:celery_app beat --loglevel=INFO --schedule=/tmp/celerybeat-schedule
@@ -122,6 +143,7 @@ services:
         condition: service_healthy
 
   frontend:
+    <<: *runtime-hardening
     build:
       context: ./frontend
       args:

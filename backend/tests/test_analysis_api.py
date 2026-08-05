@@ -121,9 +121,7 @@ def test_enrichment_endpoint_labels_ai_output_and_uses_completed_evidence() -> N
         )
         analysis_id = accepted.json()["analysis_id"]
         asyncio.run(service.process_analysis(UUID(analysis_id)))
-        enrichment = client.post(
-            f"/api/v1/analyses/{analysis_id}/enrichment/file-risk"
-        )
+        enrichment = client.post(f"/api/v1/analyses/{analysis_id}/enrichment/file-risk")
 
     assert enrichment.status_code == 200
     assert enrichment.json()["ai_generated"] is True
@@ -199,6 +197,7 @@ def test_prompt05_alembic_migration_is_present_for_predeployment_schema_setup() 
     assert (backend_root / "alembic.ini").is_file()
     assert (migration_root / "env.py").is_file()
     assert any("codepilot_analyses" in revision.read_text() for revision in revisions)
+    assert any("workspace_id" in revision.read_text() for revision in revisions)
 
 
 def test_prompt05_deployment_copies_migrations_and_runs_them_before_app_workers() -> None:

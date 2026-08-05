@@ -34,10 +34,22 @@ def test_ruff_parser_normalizes_rule_location_and_fingerprint() -> None:
     assert findings[0].rule_id == "F401"
     assert findings[0].path == "src/app.py"
     assert findings[0].start_line == 3
-    assert findings[0].fingerprint == parse_ruff_json(json.dumps([{
-        "code": "F401", "message": "unused import", "filename": "src/app.py",
-        "location": {"row": 3, "column": 1}, "end_location": {"row": 3, "column": 8},
-    }]))[0].fingerprint
+    assert (
+        findings[0].fingerprint
+        == parse_ruff_json(
+            json.dumps(
+                [
+                    {
+                        "code": "F401",
+                        "message": "unused import",
+                        "filename": "src/app.py",
+                        "location": {"row": 3, "column": 1},
+                        "end_location": {"row": 3, "column": 8},
+                    }
+                ]
+            )
+        )[0].fingerprint
+    )
 
 
 def test_bandit_parser_maps_security_severity() -> None:

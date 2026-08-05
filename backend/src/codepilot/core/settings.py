@@ -59,6 +59,14 @@ class Settings(BaseSettings):
     github_webhook_secret: SecretStr | None = None
     github_api_base_url: str = "https://api.github.com"
     github_max_retries: Annotated[int, Field(ge=0, le=5)] = 3
+    auth_required: bool = False
+    auth_api_key: SecretStr | None = None
+    rate_limit_requests: Annotated[int, Field(gt=0, le=100_000)] = 120
+    rate_limit_window_seconds: Annotated[int, Field(gt=0, le=86_400)] = 60
+    workspace_analysis_quota: Annotated[int, Field(gt=0, le=1_000_000)] = 100
+    observability_enabled: bool = False
+    otel_service_name: str = "codepilot-api"
+    error_reporting_dsn: SecretStr | None = None
 
     @field_validator("llm_fallback_models", mode="before")
     @classmethod
@@ -90,6 +98,8 @@ class Settings(BaseSettings):
             return self
 
         errors: list[str] = []
+        if not self.auth_required or not self.auth_api_key_value():
+            errors.append("auth_required and auth_api_key are required in production")
         if self.log_format != "json":
             errors.append("log_format must be 'json' in production")
         urls = {
@@ -157,9 +167,13 @@ class Settings(BaseSettings):
         return self.github_private_key.get_secret_value() if self.github_private_key else None
 
     def github_webhook_secret_value(self) -> str | None:
-        return (
-            self.github_webhook_secret.get_secret_value() if self.github_webhook_secret else None
-        )
+        return self.github_webhook_secret.get_secret_value() if self.github_webhook_secret else None
+
+    def auth_api_key_value(self) -> str | None:
+        return self.auth_api_key.get_secret_value() if self.auth_api_key else None
+
+    def error_reporting_dsn_value(self) -> str | None:
+        return self.error_reporting_dsn.get_secret_value() if self.error_reporting_dsn else None
 
 
 @lru_cache(maxsize=1)

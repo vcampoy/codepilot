@@ -85,9 +85,7 @@ def verify_signature(secret: bytes, body: bytes, signature: str) -> None:
         raise InvalidWebhookSignatureError
 
 
-def _parse_event(
-    event_name: str, delivery_id: str, body: bytes
-) -> GitHubWebhookEvent | None:
+def _parse_event(event_name: str, delivery_id: str, body: bytes) -> GitHubWebhookEvent | None:
     if event_name not in {"push", "pull_request"}:
         return None
     try:

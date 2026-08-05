@@ -44,9 +44,13 @@ from codepilot.domain.analysis import (
 class AnalysisRepository(Protocol):
     """Source-of-truth operations required by the application service."""
 
-    async def create(self, repository_url: str) -> AnalysisRecord: ...
+    async def create(
+        self, repository_url: str, workspace_id: str = "default"
+    ) -> AnalysisRecord: ...
 
-    async def get(self, analysis_id: UUID) -> AnalysisRecord | None: ...
+    async def get(
+        self, analysis_id: UUID, workspace_id: str | None = None
+    ) -> AnalysisRecord | None: ...
 
     async def claim_running(
         self,
@@ -125,16 +129,26 @@ class InMemoryAnalysisRepository:
         self._findings: dict[UUID, dict[str, AnalysisFinding]] = {}
         self._lock = asyncio.Lock()
 
-    async def create(self, repository_url: str) -> AnalysisRecord:
+    async def create(self, repository_url: str, workspace_id: str = "default") -> AnalysisRecord:
         async with self._lock:
-            record = AnalysisRecord(uuid4(), repository_url, created_at=_utc_now())
+            record = AnalysisRecord(
+                uuid4(), repository_url, workspace_id=workspace_id, created_at=_utc_now()
+            )
             self._records[record.analysis_id] = record
             self._findings[record.analysis_id] = {}
             return _copy_record(record)
 
-    async def get(self, analysis_id: UUID) -> AnalysisRecord | None:
+    async def get(
+        self, analysis_id: UUID, workspace_id: str | None = None
+    ) -> AnalysisRecord | None:
         async with self._lock:
             record = self._records.get(analysis_id)
+            if (
+                record is not None
+                and workspace_id is not None
+                and record.workspace_id != workspace_id
+            ):
+                return None
             return _copy_record(record) if record is not None else None
 
     async def claim_running(
@@ -195,9 +209,7 @@ class InMemoryAnalysisRepository:
                     recovered += 1
             return recovered
 
-    async def find_stale_queued(
-        self, *, now: datetime, max_age_seconds: float
-    ) -> tuple[UUID, ...]:
+    async def find_stale_queued(self, *, now: datetime, max_age_seconds: float) -> tuple[UUID, ...]:
         cutoff = now - timedelta(seconds=max_age_seconds)
         async with self._lock:
             return tuple(
@@ -342,6 +354,7 @@ def _copy_record(record: AnalysisRecord) -> AnalysisRecord:
     return AnalysisRecord(
         analysis_id=record.analysis_id,
         repository_url=record.repository_url,
+        workspace_id=record.workspace_id,
         status=record.status,
         commit_sha=record.commit_sha,
         summary=record.summary,
@@ -366,6 +379,7 @@ _ANALYSES = Table(
     # SQLAlchemy's Uuid also keeps the table portable for adapter-level tests.
     Column("analysis_id", Uuid(as_uuid=True), primary_key=True),
     Column("repository_url", String(2048), nullable=False),
+    Column("workspace_id", String(64), nullable=False, default="default"),
     Column("created_at", DateTime(timezone=True), nullable=False),
     Column("status", String(16), nullable=False),
     Column("commit_sha", String(64)),
@@ -407,13 +421,16 @@ class PostgresAnalysisRepository:
     def __init__(self, database_url: str, engine: AsyncEngine | None = None) -> None:
         self._engine = engine or create_async_engine(database_url, pool_pre_ping=True)
 
-    async def create(self, repository_url: str) -> AnalysisRecord:
-        record = AnalysisRecord(uuid4(), repository_url, created_at=_utc_now())
+    async def create(self, repository_url: str, workspace_id: str = "default") -> AnalysisRecord:
+        record = AnalysisRecord(
+            uuid4(), repository_url, workspace_id=workspace_id, created_at=_utc_now()
+        )
         async with self._engine.begin() as connection:
             await connection.execute(
                 insert(_ANALYSES).values(
                     analysis_id=record.analysis_id,
                     repository_url=record.repository_url,
+                    workspace_id=record.workspace_id,
                     created_at=record.created_at,
                     status=record.status.value,
                     retryable=False,
@@ -421,11 +438,14 @@ class PostgresAnalysisRepository:
             )
         return record
 
-    async def get(self, analysis_id: UUID) -> AnalysisRecord | None:
+    async def get(
+        self, analysis_id: UUID, workspace_id: str | None = None
+    ) -> AnalysisRecord | None:
         async with self._engine.connect() as connection:
-            result = await connection.execute(
-                select(_ANALYSES).where(_ANALYSES.c.analysis_id == analysis_id)
-            )
+            conditions = [_ANALYSES.c.analysis_id == analysis_id]
+            if workspace_id is not None:
+                conditions.append(_ANALYSES.c.workspace_id == workspace_id)
+            result = await connection.execute(select(_ANALYSES).where(and_(*conditions)))
             row = result.mappings().one_or_none()
         return _record_from_row(row) if row is not None else None
 
@@ -506,9 +526,7 @@ class PostgresAnalysisRepository:
             )
         return result.rowcount
 
-    async def find_stale_queued(
-        self, *, now: datetime, max_age_seconds: float
-    ) -> tuple[UUID, ...]:
+    async def find_stale_queued(self, *, now: datetime, max_age_seconds: float) -> tuple[UUID, ...]:
         cutoff = now - timedelta(seconds=max_age_seconds)
         async with self._engine.connect() as connection:
             result = await connection.execute(
@@ -718,9 +736,7 @@ class PostgresAnalysisRepository:
         if row is None:
             raise AnalysisNotFoundError
         if row[0] != AnalysisStatus.RUNNING.value:
-            raise InvalidAnalysisTransitionError(
-                f"Cannot change analysis in {row[0]} state."
-            )
+            raise InvalidAnalysisTransitionError(f"Cannot change analysis in {row[0]} state.")
         if lease_token is not None and row[1] != lease_token:
             raise InvalidAnalysisTransitionError("Analysis lease is no longer owned.")
         if lease_token is None or row[2] is None:
@@ -762,6 +778,7 @@ def _record_from_row(row: Any) -> AnalysisRecord:
     return AnalysisRecord(
         analysis_id=cast(UUID, row["analysis_id"]),
         repository_url=cast(str, row["repository_url"]),
+        workspace_id=cast(str, row["workspace_id"]),
         status=AnalysisStatus(cast(str, row["status"])),
         commit_sha=cast(str | None, row["commit_sha"]),
         summary=_summary_from_json(summary),
@@ -801,8 +818,7 @@ def _summary_from_json(value: Any) -> AnalysisSummary | None:
         analyzed_file_count=int(value["analyzed_file_count"]),
         source_lines=int(value["source_lines"]),
         finding_count_by_severity={
-            str(key): int(count)
-            for key, count in dict(value["finding_count_by_severity"]).items()
+            str(key): int(count) for key, count in dict(value["finding_count_by_severity"]).items()
         },
         duration_seconds=float(value["duration_seconds"]),
     )

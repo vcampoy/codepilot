@@ -190,9 +190,7 @@ def test_enforces_file_count_limit_and_cleans_up(tmp_path: Path) -> None:
     source_path = tmp_path / "source"
     source_path.mkdir()
     _create_local_git_repository(source_path)
-    service, created_directories = _service(
-        source_path, limits=IngestionLimits(max_file_count=1)
-    )
+    service, created_directories = _service(source_path, limits=IngestionLimits(max_file_count=1))
 
     async def scenario() -> None:
         with pytest.raises(RepositoryFileCountLimitError):
@@ -256,9 +254,7 @@ def test_rejects_shared_and_non_public_dns_resolution(tmp_path: Path, address: s
 
 
 @pytest.mark.parametrize("failure", [RepositoryTimeoutError(), RepositoryCancelledError()])
-def test_clone_failure_cleans_up_isolated_directory(
-    tmp_path: Path, failure: Exception
-) -> None:
+def test_clone_failure_cleans_up_isolated_directory(tmp_path: Path, failure: Exception) -> None:
     source_path = tmp_path / "source"
     source_path.mkdir()
     service, created_directories = _service(source_path, failure=failure)
@@ -466,9 +462,7 @@ def test_real_metadata_cancellation_terminates_process_tree(tmp_path: Path) -> N
             await task
 
     asyncio.run(scenario())
-    _wait_for_process_exit(
-        int(record_path.with_suffix(".child").read_text(encoding="ascii"))
-    )
+    _wait_for_process_exit(int(record_path.with_suffix(".child").read_text(encoding="ascii")))
 
 
 def test_service_metadata_cancellation_cleans_workspace_and_yields_no_snapshot(
@@ -493,9 +487,7 @@ def test_service_metadata_cancellation_cleans_workspace_and_yields_no_snapshot(
     async def scenario() -> None:
         nonlocal yielded
         with pytest.raises(RepositoryCancelledError):
-            async with service.ingest(
-                _PUBLIC_TEST_URL, cancellation_event=cancellation_event
-            ):
+            async with service.ingest(_PUBLIC_TEST_URL, cancellation_event=cancellation_event):
                 yielded = True
 
     async def run_and_cancel() -> None:
@@ -508,9 +500,7 @@ def test_service_metadata_cancellation_cleans_workspace_and_yields_no_snapshot(
     assert not yielded
     assert created_directories
     assert all(not directory.exists() for directory in created_directories)
-    _wait_for_process_exit(
-        int(record_path.with_suffix(".child").read_text(encoding="ascii"))
-    )
+    _wait_for_process_exit(int(record_path.with_suffix(".child").read_text(encoding="ascii")))
 
 
 def test_real_clone_discards_large_git_output_and_uses_monitor_interval(tmp_path: Path) -> None:

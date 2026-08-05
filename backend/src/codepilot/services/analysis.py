@@ -116,9 +116,11 @@ class AnalysisService:
         self._queue = queue
         self._lease_seconds = lease_seconds
 
-    async def request_analysis(self, repository_url: str) -> AnalysisRecord:
+    async def request_analysis(
+        self, repository_url: str, workspace_id: str = "default"
+    ) -> AnalysisRecord:
         """Persist a queued request before publishing its identifier."""
-        record = await self._repository.create(repository_url)
+        record = await self._repository.create(repository_url, workspace_id)
         try:
             self._queue.enqueue(record.analysis_id)
         except Exception as error:
@@ -138,14 +140,18 @@ class AnalysisService:
             raise AnalysisEnqueueError from error
         return record
 
-    async def get_analysis(self, analysis_id: UUID) -> AnalysisRecord:
-        record = await self._repository.get(analysis_id)
+    async def get_analysis(
+        self, analysis_id: UUID, workspace_id: str | None = None
+    ) -> AnalysisRecord:
+        record = await self._repository.get(analysis_id, workspace_id)
         if record is None:
             raise AnalysisNotFoundError
         return record
 
-    async def get_summary(self, analysis_id: UUID) -> AnalysisRecord:
-        return await self.get_analysis(analysis_id)
+    async def get_summary(
+        self, analysis_id: UUID, workspace_id: str | None = None
+    ) -> AnalysisRecord:
+        return await self.get_analysis(analysis_id, workspace_id)
 
     async def recover_stale_analyses(self, *, now: datetime | None = None) -> int:
         """Reclaim crashed work and republish old queued identifiers."""
@@ -191,9 +197,7 @@ class AnalysisService:
             raise _classify_database_error(error) from error
         if lease_token is None:
             return
-        heartbeat_task = asyncio.create_task(
-            self._heartbeat_loop(analysis_id, lease_token)
-        )
+        heartbeat_task = asyncio.create_task(self._heartbeat_loop(analysis_id, lease_token))
         try:
             await self._process_claimed_analysis(
                 analysis_id, record, lease_token, terminalize_transient
@@ -219,9 +223,7 @@ class AnalysisService:
                     analysis_id, result.findings, lease_token=lease_token
                 )
                 stored_findings = await self._repository.get_findings(analysis_id)
-                summary = _build_summary(
-                    result, stored_findings, time.perf_counter() - started
-                )
+                summary = _build_summary(result, stored_findings, time.perf_counter() - started)
                 await self._repository.complete(
                     analysis_id,
                     result,
@@ -238,9 +240,7 @@ class AnalysisService:
                 )
                 return
             classified = _classify_ingestion_error(error)
-            await self._handle_failure(
-                analysis_id, classified, lease_token, terminalize_transient
-            )
+            await self._handle_failure(analysis_id, classified, lease_token, terminalize_transient)
             raise classified from error
         except InvalidAnalysisTransitionError:
             LOGGER.info(
@@ -249,21 +249,15 @@ class AnalysisService:
             )
             return
         except AnalysisExecutionError as error:
-            await self._handle_failure(
-                analysis_id, error, lease_token, terminalize_transient
-            )
+            await self._handle_failure(analysis_id, error, lease_token, terminalize_transient)
             raise
         except RepositoryIngestionError as error:
             classified = _classify_ingestion_error(error)
-            await self._handle_failure(
-                analysis_id, classified, lease_token, terminalize_transient
-            )
+            await self._handle_failure(analysis_id, classified, lease_token, terminalize_transient)
             raise classified from error
         except Exception as error:
             classified = _classify_unexpected_error(error)
-            await self._handle_failure(
-                analysis_id, classified, lease_token, terminalize_transient
-            )
+            await self._handle_failure(analysis_id, classified, lease_token, terminalize_transient)
             LOGGER.exception(
                 "analysis_unexpected_failure",
                 extra={"analysis_id": str(analysis_id), "error_type": type(error).__name__},
@@ -328,9 +322,7 @@ class AnalysisService:
                 lease_token = error.lease_token
             terminalize_retryable = terminalize_retryable or error.terminalize
             error = error.intended
-        await self._handle_failure(
-            analysis_id, error, lease_token, terminalize_retryable
-        )
+        await self._handle_failure(analysis_id, error, lease_token, terminalize_retryable)
 
     async def _handle_failure(
         self,
