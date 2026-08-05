@@ -46,7 +46,20 @@ class Settings(BaseSettings):
     llm_enabled: bool = False
     llm_provider: str | None = None
     llm_model: str | None = None
+    llm_model_file_risk: str | None = None
+    llm_model_refactoring_plan: str | None = None
+    llm_model_deterministic_summary: str | None = None
     llm_api_key: SecretStr | None = None
+    llm_fallback_models: Annotated[list[str], NoDecode] = []
+    llm_timeout_seconds: Annotated[float, Field(gt=0, le=300)] = 30
+    llm_max_tokens: Annotated[int, Field(gt=0, le=8_192)] = 1_200
+
+    @field_validator("llm_fallback_models", mode="before")
+    @classmethod
+    def parse_llm_fallback_models(cls, value: Any) -> Any:
+        if isinstance(value, str):
+            return [model.strip() for model in value.split(",") if model.strip()]
+        return value
 
     @field_validator("database_url")
     @classmethod

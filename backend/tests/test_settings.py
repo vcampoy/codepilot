@@ -19,6 +19,18 @@ def test_settings_parse_environment_and_redact_secrets(monkeypatch: pytest.Monke
     assert "password" not in settings.model_dump_json()
 
 
+def test_settings_parse_llm_fallbacks_and_budgets(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("LLM_FALLBACK_MODELS", "provider/backup-a, provider/backup-b")
+    monkeypatch.setenv("LLM_TIMEOUT_SECONDS", "45")
+    monkeypatch.setenv("LLM_MAX_TOKENS", "900")
+
+    settings = Settings()
+
+    assert settings.llm_fallback_models == ["provider/backup-a", "provider/backup-b"]
+    assert settings.llm_timeout_seconds == 45
+    assert settings.llm_max_tokens == 900
+
+
 @pytest.mark.parametrize(
     ("field", "value"),
     [

@@ -30,6 +30,22 @@ export interface AnalyzerAvailability {
   tool: string
 }
 
+export type EnrichmentTask = 'file-risk' | 'refactoring-plan' | 'deterministic-summary'
+
+export interface EnrichmentResponse {
+  task: EnrichmentTask
+  analysis_id: string
+  enabled: boolean
+  ai_generated: boolean
+  text: string | null
+  structured: Record<string, unknown> | null
+  citations: string[]
+  model: string | null
+  provider: string | null
+  latency_ms: number
+  cache_hit: boolean
+}
+
 const configuredBaseUrl = import.meta.env.VITE_API_BASE_URL?.trim()
 const apiBaseUrl = (configuredBaseUrl || 'http://localhost:8000').replace(/\/+$/, '')
 
@@ -64,6 +80,14 @@ export function getAnalysisSummary(id: string): Promise<AnalysisSummaryResponse>
 
 export function getAnalyzerAvailability(): Promise<AnalyzerAvailability[]> {
   return request<AnalyzerAvailability[]>('/api/v1/analyses/analyzers/availability')
+}
+
+export function requestEnrichment(id: string, task: EnrichmentTask, path?: string): Promise<EnrichmentResponse> {
+  const query = path ? `?path=${encodeURIComponent(path)}` : ''
+  return request<EnrichmentResponse>(
+    `/api/v1/analyses/${encodeURIComponent(id)}/enrichment/${task}${query}`,
+    { method: 'POST' },
+  )
 }
 
 export const apiDocsUrl = `${apiBaseUrl}/docs`

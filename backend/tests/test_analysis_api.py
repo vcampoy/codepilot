@@ -13,6 +13,7 @@ from pydantic import SecretStr
 
 from codepilot.core.settings import Settings
 from codepilot.domain.analysis import AnalysisResult
+from codepilot.llm.contracts import DeterministicEvidence, EnrichmentResult, EnrichmentTask
 from codepilot.main import create_app
 from codepilot.repositories.analysis import (
     InMemoryAnalysisRepository,
@@ -48,6 +49,22 @@ class ApiQueue:
 
     def enqueue(self, analysis_id: object) -> None:
         self.analysis_ids.append(analysis_id)
+
+
+class ApiLlmGateway:
+    async def enrich(
+        self, task: EnrichmentTask, evidence: DeterministicEvidence
+    ) -> EnrichmentResult:
+        return EnrichmentResult(
+            task=task,
+            analysis_id=evidence.analysis_id,
+            enabled=True,
+            ai_generated=True,
+            text="Evidence-backed explanation.",
+            citations=["score:finding_count"],
+            model="test-model",
+            provider="test",
+        )
 
 
 def make_service() -> tuple[InMemoryAnalysisRepository, AnalysisService]:
@@ -93,6 +110,24 @@ def test_summary_endpoint_exposes_persisted_metrics_after_worker_completion() ->
         "finding_count_by_severity": {},
         "duration_seconds": summary.json()["summary"]["duration_seconds"],
     }
+
+
+def test_enrichment_endpoint_labels_ai_output_and_uses_completed_evidence() -> None:
+    _, service = make_service()
+    with TestClient(create_app(analysis_service=service, llm_gateway=ApiLlmGateway())) as client:
+        accepted = client.post(
+            "/api/v1/analyses",
+            json={"repository_url": "https://github.com/example/project.git"},
+        )
+        analysis_id = accepted.json()["analysis_id"]
+        asyncio.run(service.process_analysis(UUID(analysis_id)))
+        enrichment = client.post(
+            f"/api/v1/analyses/{analysis_id}/enrichment/file-risk"
+        )
+
+    assert enrichment.status_code == 200
+    assert enrichment.json()["ai_generated"] is True
+    assert enrichment.json()["citations"] == ["score:finding_count"]
 
 
 def test_unknown_analysis_is_a_safe_not_found_error() -> None:

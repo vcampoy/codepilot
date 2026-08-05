@@ -11,7 +11,12 @@ from pydantic import BaseModel, Field
 
 from codepilot.core.errors import ApplicationError
 from codepilot.domain.analysis import AnalysisNotFoundError, AnalysisRecord
+from codepilot.llm.contracts import EnrichmentResult, EnrichmentTask, LlmError
 from codepilot.services.analysis import AnalysisEnqueueError, AnalysisService
+from codepilot.services.llm_enrichment import (
+    AnalysisNotReadyForEnrichmentError,
+    LlmEnrichmentService,
+)
 
 router = APIRouter(prefix="/analyses", tags=["analyses"])
 
@@ -91,6 +96,31 @@ async def analyzer_availability() -> list[AnalyzerAvailabilityResponse]:
             ("sarif.import", "uploaded-artifact"),
         )
     ]
+
+
+@router.post(
+    "/{analysis_id}/enrichment/{task}",
+    response_model=EnrichmentResult,
+)
+async def analysis_enrichment(
+    analysis_id: UUID, task: EnrichmentTask, request: Request, path: str | None = None
+) -> EnrichmentResult:
+    record = await _get_record(request, analysis_id)
+    service = cast(LlmEnrichmentService, request.app.state.llm_enrichment_service)
+    try:
+        return await service.enrich_analysis(record, task, path)
+    except AnalysisNotReadyForEnrichmentError as error:
+        raise ApplicationError(
+            "analysis_not_ready",
+            "Deterministic analysis evidence is not available yet.",
+            status_code=409,
+        ) from error
+    except LlmError as error:
+        raise ApplicationError(
+            "llm_enrichment_unavailable",
+            "AI enrichment is unavailable; deterministic analysis remains available.",
+            status_code=503,
+        ) from error
 
 
 @router.get("/{analysis_id}", response_model=AnalysisStatusResponse)

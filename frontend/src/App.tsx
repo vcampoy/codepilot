@@ -6,9 +6,11 @@ import {
   getAnalysisStatus,
   getAnalysisSummary,
   getAnalyzerAvailability,
+  requestEnrichment,
   type AnalysisStatus,
   type AnalysisSummaryResponse,
   type AnalyzerAvailability,
+  type EnrichmentResponse,
 } from './api'
 
 type View = 'repositories' | 'analyses' | 'overview' | 'findings' | 'hotspots' | 'files' | 'quality'
@@ -175,6 +177,9 @@ function App() {
 }
 
 function OverviewView({ analysisId, status, summary, availability }: { analysisId: string | null; status: AnalysisStatus | null; summary: AnalysisSummaryResponse['summary']; availability: AnalyzerAvailability[] }) {
+  const [enrichment, setEnrichment] = useState<EnrichmentResponse | null>(null)
+  const [enrichmentBusy, setEnrichmentBusy] = useState(false)
+  const [enrichmentError, setEnrichmentError] = useState<string | null>(null)
   const severityTotal = summary ? Object.values(summary.finding_count_by_severity).reduce((total, value) => total + value, 0) : null
   const cards = [
     ['Risk score', '-', 'Risk model data pending'],
@@ -182,7 +187,19 @@ function OverviewView({ analysisId, status, summary, availability }: { analysisI
     ['Files analyzed', summary ? String(summary.analyzed_file_count) : 'â€”', 'Repository evidence'],
     ['Duration', summary ? `${summary.duration_seconds.toFixed(1)}s` : 'â€”', 'Worker execution time'],
   ]
-  return <section className="page-grid"><div className="section-heading"><div><p className="kicker">Analysis overview</p><h2>{analysisId ? `Run ${analysisId.slice(0, 8)}` : 'No active analysis'}</h2></div><span className={`status-badge status-${status}`}>{status || 'idle'}</span></div><div className="metric-grid">{cards.map(([label, value, note]) => <article className="metric-card" key={label}><span>{label}</span><strong>{value}</strong><small>{note}</small></article>)}</div><div className="panel"><div className="panel-title"><span>Findings by severity</span><span className="muted">Reported by the API</span></div>{summary ? Object.entries(summary.finding_count_by_severity).map(([severity, count]) => <div className="availability-row" key={severity}><span>{severity}</span><strong>{count}</strong></div>) : <EmptyState title="Severity data pending" description="Completed analyzer output will populate this breakdown." compact />}</div><div className="panel"><div className="panel-title"><span>Analyzer availability</span><span className="muted">No secrets / no arbitrary execution</span></div>{availability.length ? availability.map((item) => <div className="availability-row" key={item.analyzer}><span>{item.analyzer}</span><span className={`availability-${item.status}`}>{item.status}</span><small>{item.tool}</small></div>) : <EmptyState title="Availability unavailable" description="Analyzer availability will be reported when the API is reachable." compact />}</div></section>
+  const explain = async () => {
+    if (!analysisId) return
+    setEnrichmentBusy(true)
+    setEnrichmentError(null)
+    try {
+      setEnrichment(await requestEnrichment(analysisId, 'deterministic-summary'))
+    } catch (requestError) {
+      setEnrichmentError(requestError instanceof Error ? requestError.message : 'AI enrichment failed.')
+    } finally {
+      setEnrichmentBusy(false)
+    }
+  }
+  return <section className="page-grid"><div className="section-heading"><div><p className="kicker">Analysis overview</p><h2>{analysisId ? `Run ${analysisId.slice(0, 8)}` : 'No active analysis'}</h2></div><span className={`status-badge status-${status}`}>{status || 'idle'}</span></div><div className="metric-grid">{cards.map(([label, value, note]) => <article className="metric-card" key={label}><span>{label}</span><strong>{value}</strong><small>{note}</small></article>)}</div><div className="panel"><div className="panel-title"><span>Findings by severity</span><span className="muted">Reported by the API</span></div>{summary ? Object.entries(summary.finding_count_by_severity).map(([severity, count]) => <div className="availability-row" key={severity}><span>{severity}</span><strong>{count}</strong></div>) : <EmptyState title="Severity data pending" description="Completed analyzer output will populate this breakdown." compact />}</div><div className="panel"><div className="panel-title"><span>Analyzer availability</span><span className="muted">No secrets / no arbitrary execution</span></div>{availability.length ? availability.map((item) => <div className="availability-row" key={item.analyzer}><span>{item.analyzer}</span><span className={`availability-${item.status}`}>{item.status}</span><small>{item.tool}</small></div>) : <EmptyState title="Availability unavailable" description="Analyzer availability will be reported when the API is reachable." compact />}</div><div className="panel"><div className="panel-title"><span>Optional AI explanation</span><span className="muted">Always grounded in stored evidence</span></div><button className="secondary-button" disabled={!summary || enrichmentBusy} onClick={() => void explain()} type="button">{enrichmentBusy ? 'Generating...' : 'Explain deterministic summary'}</button>{enrichmentError && <p className="error-copy" role="alert">{enrichmentError}</p>}{enrichment && <div className="ai-result"><strong>{enrichment.ai_generated ? 'AI-generated explanation' : 'AI enrichment disabled'}</strong>{enrichment.text && <p>{enrichment.text}</p>}{enrichment.citations.length > 0 && <small>Citations: {enrichment.citations.join(', ')}</small>}</div>}</div></section>
 }
 
 function HistoryView({ analysisId, status }: { analysisId: string | null; status: AnalysisStatus | null }) {

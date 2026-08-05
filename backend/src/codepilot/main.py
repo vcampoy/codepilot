@@ -20,8 +20,11 @@ from codepilot.core.errors import (
 from codepilot.core.logging import configure_logging
 from codepilot.core.middleware import CorrelationMiddleware
 from codepilot.core.settings import Settings, get_settings
+from codepilot.llm.contracts import EnrichmentTask, NoOpLlmGateway
+from codepilot.llm.gateway import LiteLlmGateway
 from codepilot.repositories.analysis import PostgresAnalysisRepository
 from codepilot.services.analysis import AnalysisService, NoopAnalyzer
+from codepilot.services.llm_enrichment import LlmEnrichmentService, LlmGateway
 from codepilot.services.repository_ingestion import (
     IngestionLimits,
     RepositoryIngestionService,
@@ -46,6 +49,7 @@ def create_app(
     settings: Settings | None = None,
     *,
     analysis_service: AnalysisService | None = None,
+    llm_gateway: LlmGateway | None = None,
 ) -> FastAPI:
     """Create an independently configured FastAPI application."""
     resolved_settings = settings if settings is not None else get_settings()
@@ -76,6 +80,10 @@ def create_app(
     application.state.analysis_repository = analysis_repository
     application.state.owns_analysis_repository = owns_analysis_repository
     application.state.analysis_service = resolved_analysis_service
+    resolved_llm_gateway = llm_gateway or _build_llm_gateway(resolved_settings)
+    application.state.llm_enrichment_service = LlmEnrichmentService(
+        resolved_llm_gateway, analysis_repository
+    )
     application.add_middleware(
         CORSMiddleware,
         allow_origins=resolved_settings.cors_origins,
@@ -93,6 +101,31 @@ def create_app(
     application.add_exception_handler(Exception, unexpected_exception_handler)
     application.include_router(router)
     return application
+
+
+def _build_llm_gateway(settings: Settings) -> LlmGateway:
+    if not settings.llm_enabled:
+        return NoOpLlmGateway()
+    if not settings.llm_model:
+        return NoOpLlmGateway()
+    models_by_task = {
+        task: (model,)
+        for task, model in (
+            (EnrichmentTask.FILE_RISK, settings.llm_model_file_risk),
+            (EnrichmentTask.REFACTORING_PLAN, settings.llm_model_refactoring_plan),
+            (EnrichmentTask.DETERMINISTIC_SUMMARY, settings.llm_model_deterministic_summary),
+        )
+        if model
+    }
+    return LiteLlmGateway(
+        model=settings.llm_model,
+        fallback_models=settings.llm_fallback_models,
+        api_key=settings.llm_api_key_value(),
+        provider=settings.llm_provider or "litellm",
+        timeout_seconds=settings.llm_timeout_seconds,
+        max_tokens=settings.llm_max_tokens,
+        models_by_task=models_by_task,
+    )
 
 
 app = create_app()
