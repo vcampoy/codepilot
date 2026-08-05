@@ -41,6 +41,8 @@ class Settings(BaseSettings):
     repository_max_size_bytes: Annotated[int, Field(gt=0, le=10_000_000_000)] = 100_000_000
     repository_max_file_count: Annotated[int, Field(gt=0, le=1_000_000)] = 50_000
     analysis_timeout_seconds: Annotated[int, Field(gt=0, le=86_400)] = 300
+    analysis_lease_seconds: Annotated[int, Field(gt=0, le=86_400)] = 900
+    analysis_recovery_interval_seconds: Annotated[int, Field(gt=0, le=3_600)] = 60
     llm_enabled: bool = False
     llm_provider: str | None = None
     llm_model: str | None = None

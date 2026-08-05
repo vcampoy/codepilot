@@ -1,0 +1,808 @@
+"""Persistence boundary for Prompt 05 analysis state and findings."""
+
+from __future__ import annotations
+
+import asyncio
+from collections.abc import Sequence
+from datetime import UTC, datetime, timedelta
+from typing import Any, Protocol, cast
+from uuid import UUID, uuid4
+
+from sqlalchemy import (
+    JSON,
+    Boolean,
+    Column,
+    DateTime,
+    ForeignKey,
+    Integer,
+    MetaData,
+    String,
+    Table,
+    UniqueConstraint,
+    Uuid,
+    and_,
+    insert,
+    or_,
+    select,
+    update,
+)
+from sqlalchemy.dialects.postgresql import insert as postgresql_insert
+from sqlalchemy.ext.asyncio import AsyncEngine, create_async_engine
+
+from codepilot.domain.analysis import (
+    AnalysisFinding,
+    AnalysisNotFoundError,
+    AnalysisRecord,
+    AnalysisResult,
+    AnalysisStatus,
+    AnalysisSummary,
+    InvalidAnalysisTransitionError,
+    fingerprint_finding,
+)
+
+
+class AnalysisRepository(Protocol):
+    """Source-of-truth operations required by the application service."""
+
+    async def create(self, repository_url: str) -> AnalysisRecord: ...
+
+    async def get(self, analysis_id: UUID) -> AnalysisRecord | None: ...
+
+    async def claim_running(
+        self,
+        analysis_id: UUID,
+        *,
+        now: datetime | None = None,
+        lease_seconds: float = 900.0,
+    ) -> UUID | None: ...
+
+    async def heartbeat(
+        self,
+        analysis_id: UUID,
+        *,
+        now: datetime,
+        lease_seconds: float,
+        lease_token: UUID | None = None,
+    ) -> bool: ...
+
+    async def recover_stale_running(self, *, now: datetime) -> int: ...
+
+    async def find_stale_queued(
+        self, *, now: datetime, max_age_seconds: float
+    ) -> tuple[UUID, ...]: ...
+
+    async def requeue(
+        self,
+        analysis_id: UUID,
+        *,
+        lease_token: UUID | None = None,
+        now: datetime | None = None,
+    ) -> None: ...
+
+    async def persist_findings(
+        self,
+        analysis_id: UUID,
+        findings: Sequence[AnalysisFinding],
+        *,
+        lease_token: UUID | None = None,
+        now: datetime | None = None,
+    ) -> int: ...
+
+    async def get_findings(self, analysis_id: UUID) -> tuple[AnalysisFinding, ...]: ...
+
+    async def complete(
+        self,
+        analysis_id: UUID,
+        analysis_result: AnalysisResult,
+        summary: AnalysisSummary | None = None,
+        *,
+        commit_sha: str | None = None,
+        lease_token: UUID | None = None,
+        now: datetime | None = None,
+    ) -> None: ...
+
+    async def fail(
+        self,
+        analysis_id: UUID,
+        message: str,
+        *,
+        retryable: bool,
+        lease_token: UUID | None = None,
+        now: datetime | None = None,
+    ) -> None: ...
+
+    async def fail_queued(self, analysis_id: UUID, message: str) -> None: ...
+
+
+class InMemoryAnalysisRepository:
+    """Small deterministic adapter for unit tests only.
+
+    Production API and workers use :class:`PostgresAnalysisRepository`.
+    """
+
+    def __init__(self) -> None:
+        self._records: dict[UUID, AnalysisRecord] = {}
+        self._findings: dict[UUID, dict[str, AnalysisFinding]] = {}
+        self._lock = asyncio.Lock()
+
+    async def create(self, repository_url: str) -> AnalysisRecord:
+        async with self._lock:
+            record = AnalysisRecord(uuid4(), repository_url, created_at=_utc_now())
+            self._records[record.analysis_id] = record
+            self._findings[record.analysis_id] = {}
+            return _copy_record(record)
+
+    async def get(self, analysis_id: UUID) -> AnalysisRecord | None:
+        async with self._lock:
+            record = self._records.get(analysis_id)
+            return _copy_record(record) if record is not None else None
+
+    async def claim_running(
+        self,
+        analysis_id: UUID,
+        *,
+        now: datetime | None = None,
+        lease_seconds: float = 900.0,
+    ) -> UUID | None:
+        async with self._lock:
+            record = self._require(analysis_id)
+            if record.status is AnalysisStatus.QUEUED:
+                started = now or _utc_now()
+                record.status = AnalysisStatus.RUNNING
+                record.failure_message = None
+                record.retryable = False
+                record.running_at = started
+                record.lease_expires_at = started + timedelta(seconds=lease_seconds)
+                token = uuid4()
+                record.lease_token = token
+                return token
+            return None
+
+    async def heartbeat(
+        self,
+        analysis_id: UUID,
+        *,
+        now: datetime,
+        lease_seconds: float,
+        lease_token: UUID | None = None,
+    ) -> bool:
+        async with self._lock:
+            record = self._require(analysis_id)
+            if (
+                record.status is not AnalysisStatus.RUNNING
+                or record.lease_expires_at is None
+                or record.lease_expires_at <= now
+                or lease_token is None
+                or record.lease_token != lease_token
+            ):
+                return False
+            record.lease_expires_at = now + timedelta(seconds=lease_seconds)
+            return True
+
+    async def recover_stale_running(self, *, now: datetime) -> int:
+        async with self._lock:
+            recovered = 0
+            for record in self._records.values():
+                if (
+                    record.status is AnalysisStatus.RUNNING
+                    and record.lease_expires_at is not None
+                    and record.lease_expires_at <= now
+                ):
+                    record.status = AnalysisStatus.QUEUED
+                    record.running_at = None
+                    record.lease_expires_at = None
+                    record.lease_token = None
+                    recovered += 1
+            return recovered
+
+    async def find_stale_queued(
+        self, *, now: datetime, max_age_seconds: float
+    ) -> tuple[UUID, ...]:
+        cutoff = now - timedelta(seconds=max_age_seconds)
+        async with self._lock:
+            return tuple(
+                record.analysis_id
+                for record in self._records.values()
+                if record.status is AnalysisStatus.QUEUED and record.created_at <= cutoff
+            )
+
+    async def requeue(
+        self,
+        analysis_id: UUID,
+        *,
+        lease_token: UUID | None = None,
+        now: datetime | None = None,
+    ) -> None:
+        async with self._lock:
+            record = self._require(analysis_id)
+            self._require_running(record, lease_token, now)
+            record.status = AnalysisStatus.QUEUED
+            record.failure_message = None
+            record.retryable = False
+            record.running_at = None
+            record.lease_expires_at = None
+            record.lease_token = None
+
+    async def persist_findings(
+        self,
+        analysis_id: UUID,
+        findings: Sequence[AnalysisFinding],
+        *,
+        lease_token: UUID | None = None,
+        now: datetime | None = None,
+    ) -> int:
+        async with self._lock:
+            record = self._require(analysis_id)
+            self._require_running(record, lease_token, now)
+            stored = self._findings[analysis_id]
+            new_count = 0
+            for finding in findings:
+                fingerprint = fingerprint_finding(finding)
+                if fingerprint not in stored:
+                    stored[fingerprint] = finding
+                    new_count += 1
+            return new_count
+
+    async def get_findings(self, analysis_id: UUID) -> tuple[AnalysisFinding, ...]:
+        async with self._lock:
+            self._require(analysis_id)
+            return tuple(self._findings[analysis_id].values())
+
+    async def complete(
+        self,
+        analysis_id: UUID,
+        analysis_result: AnalysisResult,
+        summary: AnalysisSummary | None = None,
+        *,
+        commit_sha: str | None = None,
+        lease_token: UUID | None = None,
+        now: datetime | None = None,
+    ) -> None:
+        async with self._lock:
+            record = self._require(analysis_id)
+            self._require_running(record, lease_token, now)
+            if summary is None:
+                raise ValueError("summary is required for completion")
+            record.status = AnalysisStatus.COMPLETED
+            record.commit_sha = commit_sha
+            record.summary = summary
+            record.failure_message = None
+            record.retryable = False
+            record.running_at = None
+            record.lease_expires_at = None
+            record.lease_token = None
+
+    async def fail(
+        self,
+        analysis_id: UUID,
+        message: str,
+        *,
+        retryable: bool,
+        lease_token: UUID | None = None,
+        now: datetime | None = None,
+    ) -> None:
+        async with self._lock:
+            record = self._require(analysis_id)
+            if record.status not in {AnalysisStatus.QUEUED, AnalysisStatus.RUNNING}:
+                raise InvalidAnalysisTransitionError(
+                    f"Cannot fail analysis in {record.status.value} state."
+                )
+            if record.status is AnalysisStatus.RUNNING and lease_token is None:
+                raise InvalidAnalysisTransitionError("Running analysis lease is required.")
+            if record.status is AnalysisStatus.RUNNING:
+                self._require_running(record, lease_token, now)
+            if lease_token is not None and record.lease_token != lease_token:
+                raise InvalidAnalysisTransitionError("Analysis lease is no longer owned.")
+            record.status = AnalysisStatus.FAILED
+            record.failure_message = message
+            record.retryable = retryable
+            record.running_at = None
+            record.lease_expires_at = None
+            record.lease_token = None
+
+    async def fail_queued(self, analysis_id: UUID, message: str) -> None:
+        async with self._lock:
+            record = self._require(analysis_id)
+            if record.status is not AnalysisStatus.QUEUED:
+                raise InvalidAnalysisTransitionError(
+                    f"Cannot fail analysis in {record.status.value} state."
+                )
+            record.status = AnalysisStatus.FAILED
+            record.failure_message = message
+            record.retryable = False
+            record.running_at = None
+            record.lease_expires_at = None
+            record.lease_token = None
+
+    def _require(self, analysis_id: UUID) -> AnalysisRecord:
+        try:
+            return self._records[analysis_id]
+        except KeyError as error:
+            raise AnalysisNotFoundError from error
+
+    @staticmethod
+    def _require_running(
+        record: AnalysisRecord,
+        lease_token: UUID | None = None,
+        now: datetime | None = None,
+    ) -> None:
+        if record.status is not AnalysisStatus.RUNNING:
+            raise InvalidAnalysisTransitionError(
+                f"Cannot change analysis in {record.status.value} state."
+            )
+        if lease_token is not None and record.lease_token != lease_token:
+            raise InvalidAnalysisTransitionError("Analysis lease is no longer owned.")
+        if lease_token is None or record.lease_expires_at is None:
+            raise InvalidAnalysisTransitionError("Analysis lease is required.")
+        if record.lease_expires_at <= (now or _utc_now()):
+            raise InvalidAnalysisTransitionError("Analysis lease has expired.")
+
+
+def _copy_record(record: AnalysisRecord) -> AnalysisRecord:
+    return AnalysisRecord(
+        analysis_id=record.analysis_id,
+        repository_url=record.repository_url,
+        status=record.status,
+        commit_sha=record.commit_sha,
+        summary=record.summary,
+        failure_message=record.failure_message,
+        retryable=record.retryable,
+        running_at=record.running_at,
+        lease_expires_at=record.lease_expires_at,
+        lease_token=record.lease_token,
+        created_at=record.created_at,
+    )
+
+
+def _utc_now() -> datetime:
+    return datetime.now(UTC)
+
+
+_METADATA = MetaData()
+_ANALYSES = Table(
+    "codepilot_analyses",
+    _METADATA,
+    # PostgreSQL is the production source of truth; UUID keeps task IDs opaque.
+    # SQLAlchemy's Uuid also keeps the table portable for adapter-level tests.
+    Column("analysis_id", Uuid(as_uuid=True), primary_key=True),
+    Column("repository_url", String(2048), nullable=False),
+    Column("created_at", DateTime(timezone=True), nullable=False),
+    Column("status", String(16), nullable=False),
+    Column("commit_sha", String(64)),
+    Column("summary", JSON),
+    Column("failure_message", String(512)),
+    Column("retryable", Boolean, nullable=False, default=False),
+    Column("running_at", DateTime(timezone=True)),
+    Column("lease_expires_at", DateTime(timezone=True)),
+    Column("lease_token", Uuid(as_uuid=True)),
+)
+_FINDINGS = Table(
+    "codepilot_analysis_findings",
+    _METADATA,
+    Column("id", Integer, primary_key=True),
+    Column(
+        "analysis_id",
+        Uuid(as_uuid=True),
+        ForeignKey("codepilot_analyses.analysis_id"),
+        nullable=False,
+    ),
+    Column("fingerprint", String(64), nullable=False),
+    Column("path", String(2048), nullable=False),
+    Column("rule_id", String(256), nullable=False),
+    Column("severity", String(32), nullable=False),
+    Column("message", String(4096), nullable=False),
+    Column("start_line", Integer, nullable=False),
+    Column("end_line", Integer, nullable=False),
+    UniqueConstraint("analysis_id", "fingerprint", name="uq_analysis_finding_fingerprint"),
+)
+
+
+class PostgresAnalysisRepository:
+    """Async PostgreSQL source of truth for analysis state and findings.
+
+    The Prompt 05 Alembic migration must run before API or worker deployment.
+    This adapter intentionally does not create or mutate production schema.
+    """
+
+    def __init__(self, database_url: str, engine: AsyncEngine | None = None) -> None:
+        self._engine = engine or create_async_engine(database_url, pool_pre_ping=True)
+
+    async def create(self, repository_url: str) -> AnalysisRecord:
+        record = AnalysisRecord(uuid4(), repository_url, created_at=_utc_now())
+        async with self._engine.begin() as connection:
+            await connection.execute(
+                insert(_ANALYSES).values(
+                    analysis_id=record.analysis_id,
+                    repository_url=record.repository_url,
+                    created_at=record.created_at,
+                    status=record.status.value,
+                    retryable=False,
+                )
+            )
+        return record
+
+    async def get(self, analysis_id: UUID) -> AnalysisRecord | None:
+        async with self._engine.connect() as connection:
+            result = await connection.execute(
+                select(_ANALYSES).where(_ANALYSES.c.analysis_id == analysis_id)
+            )
+            row = result.mappings().one_or_none()
+        return _record_from_row(row) if row is not None else None
+
+    async def claim_running(
+        self,
+        analysis_id: UUID,
+        *,
+        now: datetime | None = None,
+        lease_seconds: float = 900.0,
+    ) -> UUID | None:
+        started = now or _utc_now()
+        lease_token = uuid4()
+        async with self._engine.begin() as connection:
+            result = await connection.execute(
+                update(_ANALYSES)
+                .where(
+                    _ANALYSES.c.analysis_id == analysis_id,
+                    _ANALYSES.c.status == AnalysisStatus.QUEUED.value,
+                )
+                .values(
+                    status=AnalysisStatus.RUNNING.value,
+                    retryable=False,
+                    running_at=started,
+                    lease_expires_at=started + timedelta(seconds=lease_seconds),
+                    lease_token=lease_token,
+                )
+            )
+            claimed = result.rowcount == 1
+        if claimed:
+            return lease_token
+        record = await self.get(analysis_id)
+        if record is None:
+            raise AnalysisNotFoundError
+        return None
+
+    async def heartbeat(
+        self,
+        analysis_id: UUID,
+        *,
+        now: datetime,
+        lease_seconds: float,
+        lease_token: UUID | None = None,
+    ) -> bool:
+        async with self._engine.begin() as connection:
+            result = await connection.execute(
+                update(_ANALYSES)
+                .where(
+                    _ANALYSES.c.analysis_id == analysis_id,
+                    _ANALYSES.c.status == AnalysisStatus.RUNNING.value,
+                    _ANALYSES.c.lease_expires_at > now,
+                    _ANALYSES.c.lease_token == lease_token,
+                )
+                .values(lease_expires_at=now + timedelta(seconds=lease_seconds))
+            )
+        if result.rowcount:
+            return True
+        record = await self.get(analysis_id)
+        if record is None:
+            raise AnalysisNotFoundError
+        return False
+
+    async def recover_stale_running(self, *, now: datetime) -> int:
+        async with self._engine.begin() as connection:
+            result = await connection.execute(
+                update(_ANALYSES)
+                .where(
+                    _ANALYSES.c.status == AnalysisStatus.RUNNING.value,
+                    _ANALYSES.c.lease_expires_at <= now,
+                )
+                .values(
+                    status=AnalysisStatus.QUEUED.value,
+                    running_at=None,
+                    lease_expires_at=None,
+                    failure_message=None,
+                    retryable=False,
+                    lease_token=None,
+                )
+            )
+        return result.rowcount
+
+    async def find_stale_queued(
+        self, *, now: datetime, max_age_seconds: float
+    ) -> tuple[UUID, ...]:
+        cutoff = now - timedelta(seconds=max_age_seconds)
+        async with self._engine.connect() as connection:
+            result = await connection.execute(
+                select(_ANALYSES.c.analysis_id).where(
+                    _ANALYSES.c.status == AnalysisStatus.QUEUED.value,
+                    _ANALYSES.c.created_at <= cutoff,
+                )
+            )
+            rows = result.all()
+        return tuple(cast(UUID, row[0]) for row in rows)
+
+    async def requeue(
+        self,
+        analysis_id: UUID,
+        *,
+        lease_token: UUID | None = None,
+        now: datetime | None = None,
+    ) -> None:
+        current = now or _utc_now()
+        async with self._engine.begin() as connection:
+            result = await connection.execute(
+                update(_ANALYSES)
+                .where(
+                    _ANALYSES.c.analysis_id == analysis_id,
+                    _ANALYSES.c.status == AnalysisStatus.RUNNING.value,
+                    _ANALYSES.c.lease_token == lease_token,
+                    _ANALYSES.c.lease_expires_at > current,
+                )
+                .values(
+                    status=AnalysisStatus.QUEUED.value,
+                    failure_message=None,
+                    retryable=False,
+                    running_at=None,
+                    lease_expires_at=None,
+                    lease_token=None,
+                )
+            )
+        if result.rowcount != 1:
+            await self._raise_for_invalid_transition(
+                analysis_id, lease_token=lease_token, now=current
+            )
+
+    async def persist_findings(
+        self,
+        analysis_id: UUID,
+        findings: Sequence[AnalysisFinding],
+        *,
+        lease_token: UUID | None = None,
+        now: datetime | None = None,
+    ) -> int:
+        values = [
+            {
+                "analysis_id": analysis_id,
+                "fingerprint": fingerprint_finding(finding),
+                "path": finding.path,
+                "rule_id": finding.rule_id,
+                "severity": finding.severity,
+                "message": finding.message,
+                "start_line": finding.start_line,
+                "end_line": finding.end_line,
+            }
+            for finding in findings
+        ]
+        async with self._engine.begin() as connection:
+            await self._require_running(connection, analysis_id, lease_token, now)
+            if not values:
+                return 0
+            statement = postgresql_insert(_FINDINGS).values(values)
+            statement = statement.on_conflict_do_nothing(
+                index_elements=[_FINDINGS.c.analysis_id, _FINDINGS.c.fingerprint]
+            )
+            result = await connection.execute(statement)
+            return result.rowcount
+
+    async def get_findings(self, analysis_id: UUID) -> tuple[AnalysisFinding, ...]:
+        async with self._engine.connect() as connection:
+            await self._require_running_or_terminal(connection, analysis_id)
+            result = await connection.execute(
+                select(_FINDINGS)
+                .where(_FINDINGS.c.analysis_id == analysis_id)
+                .order_by(_FINDINGS.c.id)
+            )
+            rows = result.mappings().all()
+        return tuple(_finding_from_row(row) for row in rows)
+
+    async def complete(
+        self,
+        analysis_id: UUID,
+        analysis_result: AnalysisResult,
+        summary: AnalysisSummary | None = None,
+        *,
+        commit_sha: str | None = None,
+        lease_token: UUID | None = None,
+        now: datetime | None = None,
+    ) -> None:
+        del analysis_result
+        if summary is None:
+            raise ValueError("summary is required for completion")
+        current = now or _utc_now()
+        async with self._engine.begin() as connection:
+            update_result = await connection.execute(
+                update(_ANALYSES)
+                .where(
+                    _ANALYSES.c.analysis_id == analysis_id,
+                    _ANALYSES.c.status == AnalysisStatus.RUNNING.value,
+                    _ANALYSES.c.lease_token == lease_token,
+                    _ANALYSES.c.lease_expires_at > current,
+                )
+                .values(
+                    status=AnalysisStatus.COMPLETED.value,
+                    commit_sha=commit_sha,
+                    summary=_summary_to_json(summary),
+                    failure_message=None,
+                    retryable=False,
+                    running_at=None,
+                    lease_expires_at=None,
+                    lease_token=None,
+                )
+            )
+        if update_result.rowcount != 1:
+            await self._raise_for_invalid_transition(
+                analysis_id, lease_token=lease_token, now=current
+            )
+
+    async def fail(
+        self,
+        analysis_id: UUID,
+        message: str,
+        *,
+        retryable: bool,
+        lease_token: UUID | None = None,
+        now: datetime | None = None,
+    ) -> None:
+        current = now or _utc_now()
+        async with self._engine.begin() as connection:
+            result = await connection.execute(
+                update(_ANALYSES)
+                .where(
+                    _ANALYSES.c.analysis_id == analysis_id,
+                    (
+                        _ANALYSES.c.status == AnalysisStatus.QUEUED.value
+                        if lease_token is None
+                        else or_(
+                            _ANALYSES.c.status == AnalysisStatus.QUEUED.value,
+                            and_(
+                                _ANALYSES.c.status == AnalysisStatus.RUNNING.value,
+                                _ANALYSES.c.lease_token == lease_token,
+                                _ANALYSES.c.lease_expires_at > current,
+                            ),
+                        )
+                    ),
+                )
+                .values(
+                    status=AnalysisStatus.FAILED.value,
+                    failure_message=message,
+                    retryable=retryable,
+                    running_at=None,
+                    lease_expires_at=None,
+                    lease_token=None,
+                )
+            )
+        if result.rowcount != 1:
+            await self._raise_for_invalid_transition(
+                analysis_id, lease_token=lease_token, now=current
+            )
+
+    async def fail_queued(self, analysis_id: UUID, message: str) -> None:
+        async with self._engine.begin() as connection:
+            result = await connection.execute(
+                update(_ANALYSES)
+                .where(
+                    _ANALYSES.c.analysis_id == analysis_id,
+                    _ANALYSES.c.status == AnalysisStatus.QUEUED.value,
+                )
+                .values(
+                    status=AnalysisStatus.FAILED.value,
+                    failure_message=message,
+                    retryable=False,
+                    running_at=None,
+                    lease_expires_at=None,
+                    lease_token=None,
+                )
+            )
+        if result.rowcount != 1:
+            await self._raise_for_invalid_transition(analysis_id)
+
+    async def dispose(self) -> None:
+        await self._engine.dispose()
+
+    async def _require_running(
+        self,
+        connection: Any,
+        analysis_id: UUID,
+        lease_token: UUID | None = None,
+        now: datetime | None = None,
+    ) -> None:
+        result = await connection.execute(
+            select(
+                _ANALYSES.c.status,
+                _ANALYSES.c.lease_token,
+                _ANALYSES.c.lease_expires_at,
+            )
+            .where(_ANALYSES.c.analysis_id == analysis_id)
+            .with_for_update()
+        )
+        row = result.one_or_none()
+        if row is None:
+            raise AnalysisNotFoundError
+        if row[0] != AnalysisStatus.RUNNING.value:
+            raise InvalidAnalysisTransitionError(
+                f"Cannot change analysis in {row[0]} state."
+            )
+        if lease_token is not None and row[1] != lease_token:
+            raise InvalidAnalysisTransitionError("Analysis lease is no longer owned.")
+        if lease_token is None or row[2] is None:
+            raise InvalidAnalysisTransitionError("Analysis lease is required.")
+        if cast(datetime, row[2]) <= (now or _utc_now()):
+            raise InvalidAnalysisTransitionError("Analysis lease has expired.")
+
+    async def _require_running_or_terminal(self, connection: Any, analysis_id: UUID) -> None:
+        result = await connection.execute(
+            select(_ANALYSES.c.analysis_id).where(_ANALYSES.c.analysis_id == analysis_id)
+        )
+        if result.one_or_none() is None:
+            raise AnalysisNotFoundError
+
+    async def _raise_for_invalid_transition(
+        self,
+        analysis_id: UUID,
+        *,
+        lease_token: UUID | None = None,
+        now: datetime | None = None,
+    ) -> None:
+        record = await self.get(analysis_id)
+        if record is None:
+            raise AnalysisNotFoundError
+        if record.status is AnalysisStatus.RUNNING and (
+            lease_token is None
+            or record.lease_token != lease_token
+            or record.lease_expires_at is None
+            or record.lease_expires_at <= (now or _utc_now())
+        ):
+            raise InvalidAnalysisTransitionError("Analysis lease is no longer valid.")
+        raise InvalidAnalysisTransitionError(
+            f"Cannot change analysis in {record.status.value} state."
+        )
+
+
+def _record_from_row(row: Any) -> AnalysisRecord:
+    summary = row["summary"]
+    return AnalysisRecord(
+        analysis_id=cast(UUID, row["analysis_id"]),
+        repository_url=cast(str, row["repository_url"]),
+        status=AnalysisStatus(cast(str, row["status"])),
+        commit_sha=cast(str | None, row["commit_sha"]),
+        summary=_summary_from_json(summary),
+        failure_message=cast(str | None, row["failure_message"]),
+        retryable=bool(row["retryable"]),
+        running_at=cast(datetime | None, row["running_at"]),
+        lease_expires_at=cast(datetime | None, row["lease_expires_at"]),
+        lease_token=cast(UUID | None, row["lease_token"]),
+        created_at=cast(datetime, row["created_at"]),
+    )
+
+
+def _finding_from_row(row: Any) -> AnalysisFinding:
+    return AnalysisFinding(
+        path=cast(str, row["path"]),
+        rule_id=cast(str, row["rule_id"]),
+        severity=cast(str, row["severity"]),
+        message=cast(str, row["message"]),
+        start_line=int(row["start_line"]),
+        end_line=int(row["end_line"]),
+    )
+
+
+def _summary_to_json(summary: AnalysisSummary) -> dict[str, object]:
+    return {
+        "analyzed_file_count": summary.analyzed_file_count,
+        "source_lines": summary.source_lines,
+        "finding_count_by_severity": summary.finding_count_by_severity,
+        "duration_seconds": summary.duration_seconds,
+    }
+
+
+def _summary_from_json(value: Any) -> AnalysisSummary | None:
+    if value is None:
+        return None
+    return AnalysisSummary(
+        analyzed_file_count=int(value["analyzed_file_count"]),
+        source_lines=int(value["source_lines"]),
+        finding_count_by_severity={
+            str(key): int(count)
+            for key, count in dict(value["finding_count_by_severity"]).items()
+        },
+        duration_seconds=float(value["duration_seconds"]),
+    )
