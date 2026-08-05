@@ -20,6 +20,8 @@ from codepilot.core.errors import (
 from codepilot.core.logging import configure_logging
 from codepilot.core.middleware import CorrelationMiddleware
 from codepilot.core.settings import Settings, get_settings
+from codepilot.github.contracts import GitHubWebhookEvent
+from codepilot.github.webhooks import GitHubWebhookService, InMemoryWebhookEventStore
 from codepilot.llm.contracts import EnrichmentTask, NoOpLlmGateway
 from codepilot.llm.gateway import LiteLlmGateway
 from codepilot.repositories.analysis import PostgresAnalysisRepository
@@ -50,6 +52,7 @@ def create_app(
     *,
     analysis_service: AnalysisService | None = None,
     llm_gateway: LlmGateway | None = None,
+    github_webhook_service: GitHubWebhookService | None = None,
 ) -> FastAPI:
     """Create an independently configured FastAPI application."""
     resolved_settings = settings if settings is not None else get_settings()
@@ -83,6 +86,9 @@ def create_app(
     resolved_llm_gateway = llm_gateway or _build_llm_gateway(resolved_settings)
     application.state.llm_enrichment_service = LlmEnrichmentService(
         resolved_llm_gateway, analysis_repository
+    )
+    application.state.github_webhook_service = github_webhook_service or (
+        _build_github_webhook_service(resolved_settings)
     )
     application.add_middleware(
         CORSMiddleware,
@@ -126,6 +132,17 @@ def _build_llm_gateway(settings: Settings) -> LlmGateway:
         max_tokens=settings.llm_max_tokens,
         models_by_task=models_by_task,
     )
+
+
+def _build_github_webhook_service(settings: Settings) -> GitHubWebhookService | None:
+    secret = settings.github_webhook_secret_value()
+    if not settings.github_enabled or not secret:
+        return None
+
+    async def dispatch(_event: GitHubWebhookEvent) -> None:
+        return None
+
+    return GitHubWebhookService(secret.encode(), InMemoryWebhookEventStore(), dispatch)
 
 
 app = create_app()

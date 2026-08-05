@@ -53,6 +53,12 @@ class Settings(BaseSettings):
     llm_fallback_models: Annotated[list[str], NoDecode] = []
     llm_timeout_seconds: Annotated[float, Field(gt=0, le=300)] = 30
     llm_max_tokens: Annotated[int, Field(gt=0, le=8_192)] = 1_200
+    github_enabled: bool = False
+    github_app_id: Annotated[int | None, Field(gt=0)] = None
+    github_private_key: SecretStr | None = None
+    github_webhook_secret: SecretStr | None = None
+    github_api_base_url: str = "https://api.github.com"
+    github_max_retries: Annotated[int, Field(ge=0, le=5)] = 3
 
     @field_validator("llm_fallback_models", mode="before")
     @classmethod
@@ -118,6 +124,16 @@ class Settings(BaseSettings):
             errors.append(
                 "llm_provider, llm_model, and llm_api_key must be complete and enabled together"
             )
+        github_values = (
+            self.github_app_id,
+            self.github_private_key_value(),
+            self.github_webhook_secret_value(),
+        )
+        if self.github_enabled and not all(github_values):
+            errors.append(
+                "github_app_id, github_private_key, and github_webhook_secret "
+                "are required when GitHub is enabled"
+            )
         if errors:
             raise ValueError("; ".join(errors))
         return self
@@ -136,6 +152,14 @@ class Settings(BaseSettings):
 
     def llm_api_key_value(self) -> str | None:
         return self.llm_api_key.get_secret_value() if self.llm_api_key else None
+
+    def github_private_key_value(self) -> str | None:
+        return self.github_private_key.get_secret_value() if self.github_private_key else None
+
+    def github_webhook_secret_value(self) -> str | None:
+        return (
+            self.github_webhook_secret.get_secret_value() if self.github_webhook_secret else None
+        )
 
 
 @lru_cache(maxsize=1)

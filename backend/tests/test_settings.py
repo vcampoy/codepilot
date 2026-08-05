@@ -31,6 +31,11 @@ def test_settings_parse_llm_fallbacks_and_budgets(monkeypatch: pytest.MonkeyPatc
     assert settings.llm_max_tokens == 900
 
 
+def test_production_requires_github_app_credentials_when_enabled() -> None:
+    with pytest.raises(ValidationError, match="github_app_id"):
+        Settings(environment="production", github_enabled=True)
+
+
 @pytest.mark.parametrize(
     ("field", "value"),
     [
