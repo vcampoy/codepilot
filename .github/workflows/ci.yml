@@ -59,3 +59,24 @@ jobs:
         run: npm test
       - name: Dependency audit
         run: npm audit --omit=dev --audit-level=high
+
+  compose-smoke:
+    name: Compose smoke test
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+      - name: Start the Compose stack
+        run: docker compose up --build --wait --wait-timeout 120
+      - name: Check API health
+        run: curl --fail --retry 10 --retry-delay 2 --retry-connrefused http://localhost:8000/health
+      - name: Check frontend root
+        run: curl --fail --retry 10 --retry-delay 2 --retry-connrefused http://localhost:5173/
+      - name: Check frontend SPA fallback
+        run: curl --fail --retry 10 --retry-delay 2 --retry-connrefused http://localhost:5173/analysis/example
+      - name: Print service logs on failure
+        if: ${{ failure() }}
+        run: docker compose logs --no-color
+      - name: Stop the Compose stack
+        if: ${{ always() }}
+        run: docker compose down --volumes

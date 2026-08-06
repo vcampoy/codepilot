@@ -19,6 +19,17 @@ def test_settings_parse_environment_and_redact_secrets(monkeypatch: pytest.Monke
     assert "password" not in settings.model_dump_json()
 
 
+def test_settings_treats_empty_optional_environment_values_as_unset(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("GITHUB_APP_ID", "")
+    monkeypatch.setenv("GITHUB_ENABLED", "false")
+
+    settings = Settings()
+
+    assert settings.github_app_id is None
+
+
 def test_settings_parse_llm_fallbacks_and_budgets(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("LLM_FALLBACK_MODELS", "provider/backup-a, provider/backup-b")
     monkeypatch.setenv("LLM_TIMEOUT_SECONDS", "45")

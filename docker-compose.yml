@@ -76,6 +76,15 @@ services:
       LLM_API_KEY: ${LLM_API_KEY:-}
     ports:
       - "${API_PORT:-8000}:8000"
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=2)"
+      interval: 5s
+      timeout: 5s
+      retries: 10
     depends_on:
       migration:
         condition: service_completed_successfully
@@ -149,9 +158,15 @@ services:
       args:
         VITE_API_BASE_URL: ${VITE_API_BASE_URL:-http://localhost:8000}
     ports:
-      - "${FRONTEND_PORT:-5173}:80"
+      - "${FRONTEND_PORT:-5173}:8080"
     depends_on:
-      - api
+      api:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--spider", "http://127.0.0.1:8080/"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
 
 volumes:
   postgres-data:

@@ -2,7 +2,7 @@
 
 ## Local Compose
 
-`docker compose up --build` runs PostgreSQL, Redis, the migration job, API, Celery worker, Beat, and the static frontend. The migration service must complete before API and worker services start. Use `docker compose down` to stop the stack.
+`docker compose up --build` runs PostgreSQL, Redis, the migration job, API, Celery worker, Beat, and the static frontend. The migration service must complete before API and worker services start, and the frontend waits for the API healthcheck. Use `docker compose down` to stop the stack.
 
 ## API and worker
 
@@ -10,7 +10,7 @@ Build the backend image from `backend/`. Run the API with Uvicorn and the worker
 
 ## Frontend
 
-Build `frontend/` with `VITE_API_BASE_URL` set to the public API origin, then serve the generated `dist/` directory behind a TLS-terminating reverse proxy. The current Nginx image is a static MVP server; add a platform-specific non-root Nginx configuration before a hardened production deployment.
+Build `frontend/` with `VITE_API_BASE_URL` set to the public API origin, then serve the generated `dist/` directory behind a TLS-terminating reverse proxy. The Compose image serves the SPA with Nginx as the non-root `nginx` user on container port `8080`; the host-facing development URL remains `http://localhost:5173`.
 
 ## PostgreSQL and Redis
 
