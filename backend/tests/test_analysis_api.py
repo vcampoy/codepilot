@@ -12,7 +12,7 @@ from fastapi.testclient import TestClient
 from pydantic import SecretStr
 
 from codepilot.core.settings import Settings
-from codepilot.domain.analysis import AnalysisResult
+from codepilot.domain.analysis import AnalysisFinding, AnalysisResult, AnalyzerOutcome
 from codepilot.llm.contracts import DeterministicEvidence, EnrichmentResult, EnrichmentTask
 from codepilot.main import create_app
 from codepilot.repositories.analysis import (
@@ -41,6 +41,36 @@ class ApiIngestion:
 class ApiAnalyzer:
     async def analyze(self, _snapshot: RepositorySnapshot) -> AnalysisResult:
         return AnalysisResult(analyzed_file_count=3, source_lines=20, findings=())
+
+
+@dataclass
+class FindingsAnalyzer:
+    async def analyze(self, _snapshot: RepositorySnapshot) -> AnalysisResult:
+        return AnalysisResult(
+            analyzed_file_count=3,
+            source_lines=20,
+            findings=(
+                AnalysisFinding(
+                    path="src/main.py",
+                    rule_id="PY001",
+                    severity="warning",
+                    message="Avoid this pattern.",
+                    start_line=4,
+                    end_line=4,
+                    analyzer="python.ruff",
+                ),
+            ),
+            analyzer_outcomes=(
+                AnalyzerOutcome(
+                    analyzer="generic.file-metrics",
+                    tool="generic.file-metrics",
+                    version="1.0.0",
+                    status="succeeded",
+                    duration_seconds=0.01,
+                    generic=True,
+                ),
+            ),
+        )
 
 
 @dataclass
@@ -109,6 +139,7 @@ def test_summary_endpoint_exposes_persisted_metrics_after_worker_completion() ->
         "source_lines": 20,
         "finding_count_by_severity": {},
         "duration_seconds": summary.json()["summary"]["duration_seconds"],
+        "analyzer_outcomes": [],
     }
 
 
@@ -128,6 +159,34 @@ def test_enrichment_endpoint_labels_ai_output_and_uses_completed_evidence() -> N
     assert enrichment.json()["citations"] == ["score:finding_count"]
 
 
+def test_findings_endpoint_returns_persisted_findings_and_summary_outcomes() -> None:
+    repository = InMemoryAnalysisRepository()
+    service = AnalysisService(repository, ApiIngestion(), FindingsAnalyzer(), ApiQueue([]))
+    with TestClient(create_app(analysis_service=service)) as client:
+        accepted = client.post(
+            "/api/v1/analyses",
+            json={"repository_url": "https://github.com/example/project.git"},
+        )
+        analysis_id = accepted.json()["analysis_id"]
+        asyncio.run(service.process_analysis(UUID(analysis_id)))
+        findings = client.get(f"/api/v1/analyses/{analysis_id}/findings")
+        summary = client.get(f"/api/v1/analyses/{analysis_id}/summary")
+
+    assert findings.status_code == 200
+    assert findings.json() == [
+        {
+            "path": "src/main.py",
+            "rule_id": "PY001",
+            "analyzer": "python.ruff",
+            "severity": "warning",
+            "message": "Avoid this pattern.",
+            "start_line": 4,
+            "end_line": 4,
+        }
+    ]
+    assert summary.json()["summary"]["analyzer_outcomes"][0]["analyzer"] == "generic.file-metrics"
+
+
 def test_unknown_analysis_is_a_safe_not_found_error() -> None:
     _, service = make_service()
     with TestClient(create_app(analysis_service=service)) as client:
@@ -135,6 +194,16 @@ def test_unknown_analysis_is_a_safe_not_found_error() -> None:
 
     assert response.status_code == 404
     assert response.json()["error"]["code"] == "analysis_not_found"
+
+
+def test_global_analyzer_preflight_marks_sarif_as_not_requested() -> None:
+    _, service = make_service()
+    with TestClient(create_app(analysis_service=service)) as client:
+        response = client.get("/api/v1/analyses/analyzers/availability")
+
+    assert response.status_code == 200
+    sarif = next(item for item in response.json() if item["analyzer"] == "sarif.import")
+    assert sarif["status"] == "not_requested"
 
 
 def test_default_application_uses_configured_postgres_analysis_repository() -> None:

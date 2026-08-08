@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import shutil
 from typing import cast
 from uuid import UUID
 
@@ -61,6 +60,16 @@ class AnalyzerAvailabilityResponse(BaseModel):
     tool: str
 
 
+class AnalysisFindingResponse(BaseModel):
+    path: str
+    rule_id: str
+    analyzer: str
+    severity: str
+    message: str
+    start_line: int
+    end_line: int
+
+
 @router.post("", status_code=status.HTTP_202_ACCEPTED, response_model=AnalysisAcceptedResponse)
 async def request_analysis(payload: AnalysisRequest, request: Request) -> AnalysisAcceptedResponse:
     service = _service(request)
@@ -87,11 +96,11 @@ async def request_analysis(payload: AnalysisRequest, request: Request) -> Analys
 
 @router.get("/analyzers/availability", response_model=list[AnalyzerAvailabilityResponse])
 async def analyzer_availability() -> list[AnalyzerAvailabilityResponse]:
-    """Report whether optional external analyzer executables are installed."""
-    return [
+    """Report configured worker capabilities; run evidence lives in each summary."""
+    availability = [
         AnalyzerAvailabilityResponse(
             analyzer=analyzer,
-            status="available" if shutil.which(tool) else "skipped",
+            status="available",
             tool=tool,
         )
         for analyzer, tool in (
@@ -99,9 +108,14 @@ async def analyzer_availability() -> list[AnalyzerAvailabilityResponse]:
             ("python.bandit", "bandit"),
             ("python.radon", "radon"),
             ("javascript.eslint", "eslint"),
-            ("sarif.import", "uploaded-artifact"),
         )
     ]
+    availability.append(
+        AnalyzerAvailabilityResponse(
+            analyzer="sarif.import", status="not_requested", tool="uploaded-artifact"
+        )
+    )
+    return availability
 
 
 @router.post(
@@ -154,11 +168,47 @@ async def analysis_summary(analysis_id: UUID, request: Request) -> AnalysisSumma
                 "source_lines": summary.source_lines,
                 "finding_count_by_severity": summary.finding_count_by_severity,
                 "duration_seconds": summary.duration_seconds,
+                "analyzer_outcomes": [
+                    {
+                        "analyzer": item.analyzer,
+                        "tool": item.tool,
+                        "version": item.version,
+                        "status": item.status,
+                        "duration_seconds": item.duration_seconds,
+                        "message": item.message,
+                        "language": item.language,
+                        "generic": item.generic,
+                    }
+                    for item in summary.analyzer_outcomes
+                ],
             }
             if summary is not None
             else None
         ),
     )
+
+
+@router.get("/{analysis_id}/findings", response_model=list[AnalysisFindingResponse])
+async def analysis_findings(analysis_id: UUID, request: Request) -> list[AnalysisFindingResponse]:
+    identity = authenticate(request)
+    try:
+        findings = await _service(request).get_findings(analysis_id, identity.workspace_id)
+    except AnalysisNotFoundError as error:
+        raise ApplicationError(
+            "analysis_not_found", "Analysis was not found.", status_code=404
+        ) from error
+    return [
+        AnalysisFindingResponse(
+            path=finding.path,
+            rule_id=finding.rule_id,
+            analyzer=finding.analyzer,
+            severity=finding.severity,
+            message=finding.message,
+            start_line=finding.start_line,
+            end_line=finding.end_line,
+        )
+        for finding in findings
+    ]
 
 
 def _service(request: Request) -> AnalysisService:

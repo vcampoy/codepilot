@@ -33,6 +33,23 @@ def test_ruff_parser_normalizes_rule_location_and_fingerprint() -> None:
     )
     assert findings[0].rule_id == "F401"
     assert findings[0].path == "src/app.py"
+
+
+def test_ruff_parser_strips_worker_root_from_absolute_paths() -> None:
+    findings = parse_ruff_json(
+        json.dumps(
+            [
+                {
+                    "code": "F401",
+                    "message": "unused import",
+                    "filename": "/workspace/repository/src/app.py",
+                    "location": {"row": 3, "column": 1},
+                }
+            ]
+        ),
+        Path("/workspace/repository"),
+    )
+    assert findings[0].path == "src/app.py"
     assert findings[0].start_line == 3
     assert (
         findings[0].fingerprint

@@ -124,9 +124,9 @@ def create_stale_recovery_task(
 
 
 def _create_default_service() -> AnalysisService:
+    from codepilot.analyzers.production import ProductionRepositoryAnalyzer
     from codepilot.core.settings import Settings
     from codepilot.repositories.analysis import PostgresAnalysisRepository
-    from codepilot.services.analysis import NoopAnalyzer
     from codepilot.services.repository_ingestion import (
         IngestionLimits,
         RepositoryIngestionService,
@@ -136,7 +136,7 @@ def _create_default_service() -> AnalysisService:
     return AnalysisService(
         PostgresAnalysisRepository(settings.database_url_value()),
         RepositoryIngestionService(limits=IngestionLimits.from_settings(settings)),
-        NoopAnalyzer(),
+        ProductionRepositoryAnalyzer(tool_timeout_seconds=settings.analysis_timeout_seconds),
         CeleryAnalysisQueue(),
         lease_seconds=settings.analysis_lease_seconds,
     )

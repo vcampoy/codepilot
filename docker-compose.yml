@@ -97,6 +97,7 @@ services:
     <<: *runtime-hardening
     build:
       context: ./backend
+      target: worker
     command: celery -A codepilot.worker.celery_app:celery_app worker --loglevel=INFO
     environment:
       DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-codepilot}:${POSTGRES_PASSWORD:-codepilot}@postgres:5432/${POSTGRES_DB:-codepilot}

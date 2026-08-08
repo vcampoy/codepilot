@@ -38,6 +38,7 @@ class AnalysisFinding:
     message: str
     start_line: int
     end_line: int
+    analyzer: str = "unknown"
 
 
 @dataclass(frozen=True, slots=True)
@@ -47,6 +48,44 @@ class AnalysisResult:
     analyzed_file_count: int
     source_lines: int
     findings: tuple[AnalysisFinding, ...]
+    analyzer_outcomes: tuple[AnalyzerOutcome, ...] = ()
+    enforce_execution: bool = False
+
+    @property
+    def execution_succeeded(self) -> bool:
+        """Whether the deterministic baseline and required language tools ran."""
+        baseline = {
+            outcome.analyzer for outcome in self.analyzer_outcomes if outcome.status == "succeeded"
+        }
+        if (
+            not {"generic.file-metrics", "generic.large-source-file", "generic.long-line"}
+            <= baseline
+        ):
+            return False
+        languages = {outcome.language for outcome in self.analyzer_outcomes if outcome.language}
+        return all(
+            any(
+                outcome.language == language
+                and outcome.status == "succeeded"
+                and not outcome.generic
+                for outcome in self.analyzer_outcomes
+            )
+            for language in languages
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class AnalyzerOutcome:
+    """Persisted evidence for one analyzer invocation."""
+
+    analyzer: str
+    tool: str
+    version: str | None
+    status: str
+    duration_seconds: float
+    message: str | None = None
+    language: str | None = None
+    generic: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -57,6 +96,7 @@ class AnalysisSummary:
     source_lines: int
     finding_count_by_severity: dict[str, int]
     duration_seconds: float
+    analyzer_outcomes: tuple[AnalyzerOutcome, ...] = ()
 
 
 @dataclass(slots=True)
@@ -78,6 +118,7 @@ class AnalysisRecord:
 
 
 _FINGERPRINT_FIELDS: Final[tuple[str, ...]] = (
+    "analyzer",
     "path",
     "rule_id",
     "severity",

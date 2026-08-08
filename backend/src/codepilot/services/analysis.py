@@ -53,6 +53,12 @@ class PermanentAnalysisError(AnalysisExecutionError):
     """A failure that must not be retried automatically."""
 
 
+class NoAnalyzerExecutedError(PermanentAnalysisError):
+    """No required analyzer produced executable evidence for the repository."""
+
+    public_message = "No compatible analyzer could execute."
+
+
 class AnalysisStatePersistenceError(TransientAnalysisError):
     """A failure while persisting a required retry or terminal transition."""
 
@@ -153,6 +159,12 @@ class AnalysisService:
     ) -> AnalysisRecord:
         return await self.get_analysis(analysis_id, workspace_id)
 
+    async def get_findings(
+        self, analysis_id: UUID, workspace_id: str | None = None
+    ) -> tuple[AnalysisFinding, ...]:
+        await self.get_analysis(analysis_id, workspace_id)
+        return await self._repository.get_findings(analysis_id)
+
     async def recover_stale_analyses(self, *, now: datetime | None = None) -> int:
         """Reclaim crashed work and republish old queued identifiers."""
         current = now or datetime.now(UTC)
@@ -219,6 +231,8 @@ class AnalysisService:
         try:
             async with self._ingestion.ingest(record.repository_url) as snapshot:
                 result = await self._analyzer.analyze(snapshot)
+                if result.enforce_execution and not result.execution_succeeded:
+                    raise NoAnalyzerExecutedError("No required analyzer could execute.")
                 await self._repository.persist_findings(
                     analysis_id, result.findings, lease_token=lease_token
                 )
@@ -374,6 +388,7 @@ def _build_summary(
         source_lines=result.source_lines,
         finding_count_by_severity=counts,
         duration_seconds=duration_seconds,
+        analyzer_outcomes=result.analyzer_outcomes,
     )
 
 

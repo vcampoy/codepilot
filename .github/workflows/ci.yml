@@ -71,7 +71,7 @@ jobs:
       - name: Check API health
         run: curl --fail --retry 10 --retry-delay 2 --retry-connrefused http://localhost:8000/health
       - name: Check repository-ingestion runtime
-        run: docker compose exec -T worker sh -c 'git --version && test -r /etc/ssl/certs/ca-certificates.crt'
+        run: docker compose exec -T worker sh -c 'git --version && ruff --version && bandit --version && radon --version && eslint --version && test -r /etc/ssl/certs/ca-certificates.crt'
       - name: Check frontend root
         run: curl --fail --retry 10 --retry-delay 2 --retry-connrefused http://localhost:5173/
       - name: Check frontend SPA fallback

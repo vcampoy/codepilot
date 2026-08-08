@@ -274,6 +274,57 @@ def test_service_persists_summary_and_duplicate_delivery_does_not_repeat_work() 
     assert analyzer_calls == 1
 
 
+def test_service_rejects_result_when_required_analyzers_did_not_execute() -> None:
+    async def run() -> AnalysisRecord | None:
+        repository = InMemoryAnalysisRepository()
+        analyzer = FakeAnalyzer(AnalysisResult(4, 30, (), enforce_execution=True))
+        service = AnalysisService(
+            repository, FakeIngestion(make_snapshot()), analyzer, RecordingQueue([])
+        )
+        record = await service.request_analysis("https://github.com/example/project.git")
+        with pytest.raises(PermanentAnalysisError, match="No required analyzer"):
+            await service.process_analysis(record.analysis_id)
+        return await repository.get(record.analysis_id)
+
+    failed = asyncio.run(run())
+    assert failed is not None
+    assert failed.status is AnalysisStatus.FAILED
+    assert failed.failure_message == "No compatible analyzer could execute."
+
+
+def test_legacy_finding_is_upgraded_without_duplicate_on_new_analyzer_identity() -> None:
+    async def run() -> tuple[int, tuple[AnalysisFinding, ...]]:
+        repository = InMemoryAnalysisRepository()
+        record = await repository.create("https://github.com/example/project.git")
+        lease = await repository.claim_running(record.analysis_id)
+        assert lease is not None
+        legacy = AnalysisFinding(
+            path="/workspace/repository/src/example.py",
+            rule_id="security.no-unsafe-call",
+            severity="high",
+            message="Avoid unsafe call",
+            start_line=8,
+            end_line=8,
+        )
+        await repository.persist_findings(record.analysis_id, (legacy,), lease_token=lease)
+        current = AnalysisFinding(
+            path=legacy.path,
+            rule_id=legacy.rule_id,
+            severity=legacy.severity,
+            message=legacy.message,
+            start_line=legacy.start_line,
+            end_line=legacy.end_line,
+            analyzer="python.ruff",
+        )
+        count = await repository.persist_findings(record.analysis_id, (current,), lease_token=lease)
+        return count, await repository.get_findings(record.analysis_id)
+
+    count, findings = asyncio.run(run())
+    assert count == 1
+    assert len(findings) == 1
+    assert findings[0].analyzer == "python.ruff"
+
+
 def test_transient_failure_is_publicly_safe_and_requeued() -> None:
     async def run() -> AnalysisRecord | None:
         repository = InMemoryAnalysisRepository()

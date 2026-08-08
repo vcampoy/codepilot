@@ -7,6 +7,7 @@ from pathlib import Path
 
 from codepilot.analyzers.framework import (
     AnalyzerContext,
+    AnalyzerExecution,
     AnalyzerMetadata,
     AnalyzerMetrics,
     AnalyzerResult,
@@ -58,10 +59,9 @@ class LargeSourceFileAnalyzer:
 
     async def analyze(self, context: AnalyzerContext) -> AnalyzerResult:
         findings: list[NormalizedFinding] = []
-        files = 0
+        source_files = tuple(_iter_source_files(context.repository_path))
         excluded = 0
-        for path, skipped in _iter_source_files(context.repository_path):
-            files += 1
+        for path, skipped in source_files:
             excluded += skipped
             if path.stat().st_size > self._max_source_bytes:
                 findings.append(
@@ -79,7 +79,9 @@ class LargeSourceFileAnalyzer:
                     )
                 )
         return AnalyzerResult(
-            findings=tuple(findings), metrics=AnalyzerMetrics(files, excluded_files=excluded)
+            findings=tuple(findings),
+            metrics=AnalyzerMetrics(),
+            execution=AnalyzerExecution(self.metadata.name, self.metadata.version, 0.0, True),
         )
 
 
@@ -118,7 +120,10 @@ class LongLineAnalyzer:
                             remediation="Wrap the line or extract a named value.",
                         )
                     )
-        return AnalyzerResult(findings=tuple(findings))
+        return AnalyzerResult(
+            findings=tuple(findings),
+            execution=AnalyzerExecution(self.metadata.name, self.metadata.version, 0.0, True),
+        )
 
 
 class BasicFileMetricsAnalyzer:
@@ -139,4 +144,7 @@ class BasicFileMetricsAnalyzer:
             raw = path.read_bytes()
             if b"\x00" not in raw:
                 lines += raw.count(b"\n") + (1 if raw and not raw.endswith(b"\n") else 0)
-        return AnalyzerResult(metrics=AnalyzerMetrics(files, lines, excluded))
+        return AnalyzerResult(
+            metrics=AnalyzerMetrics(files, lines, excluded),
+            execution=AnalyzerExecution(self.metadata.name, self.metadata.version, 0.0, True),
+        )

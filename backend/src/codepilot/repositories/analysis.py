@@ -36,6 +36,7 @@ from codepilot.domain.analysis import (
     AnalysisResult,
     AnalysisStatus,
     AnalysisSummary,
+    AnalyzerOutcome,
     InvalidAnalysisTransitionError,
     fingerprint_finding,
 )
@@ -250,6 +251,21 @@ class InMemoryAnalysisRepository:
             new_count = 0
             for finding in findings:
                 fingerprint = fingerprint_finding(finding)
+                legacy_fingerprint = None
+                if finding.analyzer != "unknown":
+                    legacy_fingerprint = next(
+                        (
+                            key
+                            for key, existing in stored.items()
+                            if existing.analyzer == "unknown" and _findings_match(existing, finding)
+                        ),
+                        None,
+                    )
+                if legacy_fingerprint is not None:
+                    del stored[legacy_fingerprint]
+                    stored[fingerprint] = finding
+                    new_count += 1
+                    continue
                 if fingerprint not in stored:
                     stored[fingerprint] = finding
                     new_count += 1
@@ -407,6 +423,7 @@ _FINDINGS = Table(
     Column("message", String(4096), nullable=False),
     Column("start_line", Integer, nullable=False),
     Column("end_line", Integer, nullable=False),
+    Column("analyzer", String(256), nullable=False, default="unknown"),
     UniqueConstraint("analysis_id", "fingerprint", name="uq_analysis_finding_fingerprint"),
 )
 
@@ -587,6 +604,7 @@ class PostgresAnalysisRepository:
                 "message": finding.message,
                 "start_line": finding.start_line,
                 "end_line": finding.end_line,
+                "analyzer": finding.analyzer,
             }
             for finding in findings
         ]
@@ -594,12 +612,44 @@ class PostgresAnalysisRepository:
             await self._require_running(connection, analysis_id, lease_token, now)
             if not values:
                 return 0
-            statement = postgresql_insert(_FINDINGS).values(values)
+            legacy_result = await connection.execute(
+                select(_FINDINGS).where(
+                    _FINDINGS.c.analysis_id == analysis_id,
+                    _FINDINGS.c.analyzer == "unknown",
+                )
+            )
+            legacy_rows = [
+                (_finding_from_row(row), row["id"]) for row in legacy_result.mappings().all()
+            ]
+            upgraded = 0
+            insert_values: list[dict[str, object]] = []
+            for value, finding in zip(values, findings, strict=True):
+                legacy_index = next(
+                    (
+                        index
+                        for index, (legacy, _) in enumerate(legacy_rows)
+                        if _findings_match(legacy, finding)
+                    ),
+                    None,
+                )
+                if legacy_index is None:
+                    insert_values.append(value)
+                    continue
+                _, legacy_id = legacy_rows.pop(legacy_index)
+                await connection.execute(
+                    update(_FINDINGS)
+                    .where(_FINDINGS.c.id == legacy_id)
+                    .values(analyzer=finding.analyzer, fingerprint=value["fingerprint"])
+                )
+                upgraded += 1
+            if not insert_values:
+                return upgraded
+            statement = postgresql_insert(_FINDINGS).values(insert_values)
             statement = statement.on_conflict_do_nothing(
                 index_elements=[_FINDINGS.c.analysis_id, _FINDINGS.c.fingerprint]
             )
             result = await connection.execute(statement)
-            return result.rowcount
+            return upgraded + result.rowcount
 
     async def get_findings(self, analysis_id: UUID) -> tuple[AnalysisFinding, ...]:
         async with self._engine.connect() as connection:
@@ -799,7 +849,38 @@ def _finding_from_row(row: Any) -> AnalysisFinding:
         message=cast(str, row["message"]),
         start_line=int(row["start_line"]),
         end_line=int(row["end_line"]),
+        analyzer=cast(str, row.get("analyzer", "unknown")),
     )
+
+
+def _finding_identity(finding: AnalysisFinding) -> tuple[object, ...]:
+    """Identity used to upgrade findings persisted before analyzer provenance existed."""
+    return (
+        finding.path,
+        finding.rule_id,
+        finding.severity,
+        finding.message,
+        finding.start_line,
+        finding.end_line,
+    )
+
+
+def _findings_match(left: AnalysisFinding, right: AnalysisFinding) -> bool:
+    return _finding_identity(left)[1:] == _finding_identity(right)[1:] and _paths_match(
+        left.path, right.path
+    )
+
+
+def _paths_match(left: str, right: str) -> bool:
+    left_value = left.replace("\\", "/")
+    right_value = right.replace("\\", "/")
+    if left_value == right_value:
+        return True
+    if left_value.startswith("/"):
+        return left_value.endswith("/" + right_value.lstrip("/"))
+    if right_value.startswith("/"):
+        return right_value.endswith("/" + left_value.lstrip("/"))
+    return False
 
 
 def _summary_to_json(summary: AnalysisSummary) -> dict[str, object]:
@@ -808,6 +889,19 @@ def _summary_to_json(summary: AnalysisSummary) -> dict[str, object]:
         "source_lines": summary.source_lines,
         "finding_count_by_severity": summary.finding_count_by_severity,
         "duration_seconds": summary.duration_seconds,
+        "analyzer_outcomes": [
+            {
+                "analyzer": item.analyzer,
+                "tool": item.tool,
+                "version": item.version,
+                "status": item.status,
+                "duration_seconds": item.duration_seconds,
+                "message": item.message,
+                "language": item.language,
+                "generic": item.generic,
+            }
+            for item in summary.analyzer_outcomes
+        ],
     }
 
 
@@ -821,4 +915,17 @@ def _summary_from_json(value: Any) -> AnalysisSummary | None:
             str(key): int(count) for key, count in dict(value["finding_count_by_severity"]).items()
         },
         duration_seconds=float(value["duration_seconds"]),
+        analyzer_outcomes=tuple(
+            AnalyzerOutcome(
+                analyzer=str(item["analyzer"]),
+                tool=str(item.get("tool", item["analyzer"])),
+                version=item.get("version"),
+                status=str(item.get("status", "succeeded")),
+                duration_seconds=float(item.get("duration_seconds", 0.0)),
+                message=item.get("message"),
+                language=item.get("language"),
+                generic=bool(item.get("generic", False)),
+            )
+            for item in value.get("analyzer_outcomes", [])
+        ),
     )

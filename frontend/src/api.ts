@@ -21,12 +21,16 @@ export interface AnalysisSummaryResponse {
     source_lines: number
     finding_count_by_severity: Record<string, number>
     duration_seconds: number
+    analyzer_outcomes?: AnalyzerOutcome[]
   } | null
 }
 
+export interface AnalyzerOutcome { analyzer: string; tool: string; version: string | null; status: string; duration_seconds: number; message: string | null; language?: string | null; generic?: boolean }
+export interface AnalysisFinding { path: string; rule_id: string; analyzer: string; severity: string; message: string; start_line: number; end_line: number }
+
 export interface AnalyzerAvailability {
   analyzer: string
-  status: 'available' | 'skipped'
+  status: 'available' | 'skipped' | 'not_requested'
   tool: string
 }
 
@@ -80,6 +84,10 @@ export function getAnalysisSummary(id: string): Promise<AnalysisSummaryResponse>
 
 export function getAnalyzerAvailability(): Promise<AnalyzerAvailability[]> {
   return request<AnalyzerAvailability[]>('/api/v1/analyses/analyzers/availability')
+}
+
+export function getAnalysisFindings(id: string): Promise<AnalysisFinding[]> {
+  return request<AnalysisFinding[]>(`/api/v1/analyses/${encodeURIComponent(id)}/findings`)
 }
 
 export function requestEnrichment(id: string, task: EnrichmentTask, path?: string): Promise<EnrichmentResponse> {

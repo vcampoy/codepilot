@@ -42,6 +42,21 @@ def test_eslint_json_is_normalized() -> None:
     assert findings[0].path == "src/app.ts"
 
 
+def test_eslint_paths_are_relative_to_repository_root() -> None:
+    findings = parse_eslint_json(
+        json.dumps(
+            [
+                {
+                    "filePath": "/workspace/repository/src/app.ts",
+                    "messages": [{"ruleId": "no-eval", "line": 2, "message": "Avoid eval."}],
+                }
+            ]
+        ),
+        Path("/workspace/repository"),
+    )
+    assert findings[0].path == "src/app.ts"
+
+
 def test_sarif_roslyn_result_is_normalized_with_fingerprint() -> None:
     findings = parse_sarif_json(
         json.dumps(

@@ -124,7 +124,7 @@ def _severity(code: str) -> str:
     return "warning" if code.startswith("W") else "info"
 
 
-def parse_ruff_json(payload: str) -> tuple[NormalizedFinding, ...]:
+def parse_ruff_json(payload: str, root: Path | None = None) -> tuple[NormalizedFinding, ...]:
     values = json.loads(payload)
     return tuple(
         NormalizedFinding(
@@ -134,7 +134,9 @@ def parse_ruff_json(payload: str) -> tuple[NormalizedFinding, ...]:
             category="security" if str(value["code"]).startswith("B") else "quality",
             title=str(value["code"]),
             description=str(value["message"]),
-            path=Path(str(value["filename"])).as_posix(),
+            path=_path(str(value["filename"]), root)
+            if root
+            else Path(str(value["filename"])).as_posix(),
             start_line=int(value["location"]["row"]),
             end_line=int(value.get("end_location", value["location"])["row"]),
         )
@@ -142,7 +144,7 @@ def parse_ruff_json(payload: str) -> tuple[NormalizedFinding, ...]:
     )
 
 
-def parse_bandit_json(payload: str) -> tuple[NormalizedFinding, ...]:
+def parse_bandit_json(payload: str, root: Path | None = None) -> tuple[NormalizedFinding, ...]:
     values = json.loads(payload).get("results", [])
     severity_map = {"LOW": "info", "MEDIUM": "warning", "HIGH": "error"}
     return tuple(
@@ -153,7 +155,9 @@ def parse_bandit_json(payload: str) -> tuple[NormalizedFinding, ...]:
             category="security",
             title=str(value["test_id"]),
             description=str(value["issue_text"]),
-            path=Path(str(value["filename"])).as_posix(),
+            path=_path(str(value["filename"]), root)
+            if root
+            else Path(str(value["filename"])).as_posix(),
             start_line=int(value["line_number"]),
             end_line=int(value.get("line_range", [value["line_number"]])[-1]),
         )
@@ -161,7 +165,9 @@ def parse_bandit_json(payload: str) -> tuple[NormalizedFinding, ...]:
     )
 
 
-def parse_radon_cc_json(payload: str) -> tuple[tuple[NormalizedFinding, ...], int]:
+def parse_radon_cc_json(
+    payload: str, root: Path | None = None
+) -> tuple[tuple[NormalizedFinding, ...], int]:
     values = json.loads(payload)
     findings: list[NormalizedFinding] = []
     maximum = 0
@@ -178,7 +184,7 @@ def parse_radon_cc_json(payload: str) -> tuple[tuple[NormalizedFinding, ...], in
                         category="complexity",
                         title="High cyclomatic complexity",
                         description=f"{block['name']} has cyclomatic complexity {complexity}.",
-                        path=Path(str(filename)).as_posix(),
+                        path=_path(str(filename), root) if root else Path(str(filename)).as_posix(),
                         start_line=int(block["lineno"]),
                         end_line=int(block.get("endline", block["lineno"])),
                     )
@@ -233,12 +239,14 @@ class RuffAnalyzer(_PythonToolAnalyzer):
     async def analyze(self, context: AnalyzerContext) -> AnalyzerResult:
         started = time.perf_counter()
         version, scan = await self._run_tool(
-            context, ("check", ".", "--output-format", "json", "--no-cache")
+            context, ("check", ".", "--output-format", "json", "--no-cache", "--isolated")
         )
         execution = self._execution(version, scan, started)
         if not execution.available:
             return AnalyzerResult(execution=execution)
-        return AnalyzerResult(findings=parse_ruff_json(scan.stdout), execution=execution)
+        return AnalyzerResult(
+            findings=parse_ruff_json(scan.stdout, context.repository_path), execution=execution
+        )
 
 
 class BanditAnalyzer(_PythonToolAnalyzer):
@@ -256,7 +264,9 @@ class BanditAnalyzer(_PythonToolAnalyzer):
         execution = self._execution(version, scan, started)
         if not execution.available:
             return AnalyzerResult(execution=execution)
-        return AnalyzerResult(findings=parse_bandit_json(scan.stdout), execution=execution)
+        return AnalyzerResult(
+            findings=parse_bandit_json(scan.stdout, context.repository_path), execution=execution
+        )
 
 
 class RadonAnalyzer(_PythonToolAnalyzer):
@@ -275,7 +285,7 @@ class RadonAnalyzer(_PythonToolAnalyzer):
         execution = self._execution(version, cc, started)
         if not execution.available:
             return AnalyzerResult(execution=execution)
-        findings, complexity = parse_radon_cc_json(cc.stdout)
+        findings, complexity = parse_radon_cc_json(cc.stdout, context.repository_path)
         return AnalyzerResult(
             findings=findings,
             metrics=AnalyzerMetrics(

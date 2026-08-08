@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { createAnalysis, getAnalysisStatus, getAnalysisSummary } from './api'
+import { createAnalysis, getAnalysisFindings, getAnalysisStatus, getAnalysisSummary } from './api'
 
 afterEach(() => {
   vi.unstubAllGlobals()
@@ -60,6 +60,25 @@ describe('analysis API client', () => {
     })
     expect(fetch).toHaveBeenCalledWith(
       'http://localhost:8000/api/v1/analyses/analysis-1/summary',
+      expect.any(Object),
+    )
+  })
+
+  it('requests findings for the selected analysis', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue(
+        new Response(JSON.stringify([{ analyzer: 'python.ruff', path: 'main.py' }]), {
+          status: 200,
+        }),
+      ),
+    )
+
+    await expect(getAnalysisFindings('analysis-1')).resolves.toEqual([
+      { analyzer: 'python.ruff', path: 'main.py' },
+    ])
+    expect(fetch).toHaveBeenCalledWith(
+      'http://localhost:8000/api/v1/analyses/analysis-1/findings',
       expect.any(Object),
     )
   })

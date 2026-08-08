@@ -38,6 +38,11 @@ observability = [
     "opentelemetry-api>=1.29,<2",
     "sentry-sdk>=2.20,<3",
 ]
+analysis = [
+    "ruff>=0.9,<1",
+    "bandit>=1.8,<2",
+    "radon>=6,<7",
+]
 
 [tool.setuptools.packages.find]
 where = ["src"]

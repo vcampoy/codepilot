@@ -19,12 +19,13 @@ from codepilot.analyzers.python_adapters import (
 )
 
 
-def parse_eslint_json(payload: str) -> tuple[NormalizedFinding, ...]:
+def parse_eslint_json(payload: str, root: Path | None = None) -> tuple[NormalizedFinding, ...]:
     """Parse ESLint's JSON formatter without importing project configuration."""
     values = json.loads(payload)
     findings: list[NormalizedFinding] = []
     for file_result in values:
-        path = Path(str(file_result.get("filePath", "<unknown>"))).as_posix()
+        raw_path = str(file_result.get("filePath", "<unknown>"))
+        path = raw_path if root is None else _relative_tool_path(raw_path, root)
         for message in file_result.get("messages", []):
             rule_id = str(message.get("ruleId") or "ESLint")
             severity_value = int(message.get("severity", 1))
@@ -46,10 +47,19 @@ def parse_eslint_json(payload: str) -> tuple[NormalizedFinding, ...]:
     return tuple(findings)
 
 
+def _relative_tool_path(value: str, root: Path) -> str:
+    candidate = Path(value)
+    try:
+        return candidate.relative_to(root).as_posix()
+    except ValueError:
+        return candidate.as_posix()
+
+
 class EslintAnalyzer(_PythonToolAnalyzer):
     """Run an already-installed ESLint executable; never install dependencies."""
 
     executable = "eslint"
+    config_path = "/opt/codepilot/analyzer-runtime/eslint.config.mjs"
     metadata = AnalyzerMetadata(
         name="javascript.eslint",
         version="external",
@@ -63,12 +73,23 @@ class EslintAnalyzer(_PythonToolAnalyzer):
     async def analyze(self, context: AnalyzerContext) -> AnalyzerResult:
         started = time.perf_counter()
         version, scan = await self._run_tool(
-            context, (".", "--format", "json", "--no-error-on-unmatched-pattern")
+            context,
+            (
+                ".",
+                "--format",
+                "json",
+                "--config",
+                self.config_path,
+                "--no-config-lookup",
+                "--no-error-on-unmatched-pattern",
+            ),
         )
         execution = self._execution(version, scan, started)
         if not execution.available:
             return AnalyzerResult(execution=execution)
-        return AnalyzerResult(findings=parse_eslint_json(scan.stdout), execution=execution)
+        return AnalyzerResult(
+            findings=parse_eslint_json(scan.stdout, context.repository_path), execution=execution
+        )
 
 
 class SarifTooLargeError(ValueError):
