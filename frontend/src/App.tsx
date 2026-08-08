@@ -14,11 +14,16 @@ import {
 } from './api'
 import { createFindingsMarkdownExport, downloadMarkdownFile } from './findingsExport'
 import {
+  FINDING_COLUMNS,
   FINDING_SEVERITIES,
   categoryLabel,
   displaySeverity,
+  reconcileFindingSort,
   severityCounts,
   sortFindings,
+  toggleFindingSort,
+  type FindingColumnKey,
+  type FindingSort,
 } from './findingsPresentation'
 
 type View = 'repositories' | 'analyses' | 'overview' | 'findings' | 'hotspots' | 'files' | 'quality'
@@ -189,6 +194,9 @@ function App() {
 }
 
 function FindingsView({ findings, status, summary, error, repositoryUrl, analysisId }: { findings: AnalysisFinding[]; status: AnalysisStatus | null; summary: AnalysisSummaryResponse['summary']; error: string | null; repositoryUrl: string | null; analysisId: string | null }) {
+  const [sort, setSort] = useState<FindingSort>({ column: 'severity', direction: 'desc' })
+  const [visibleColumns, setVisibleColumns] = useState<FindingColumnKey[]>(() => FINDING_COLUMNS.map(({ key }) => key))
+
   if (status === 'failed') {
     const noAnalyzerEvidence = error === 'No compatible analyzer could execute.'
     return <EmptyState title={noAnalyzerEvidence ? 'No analyzers ran' : 'Analysis failed'} description={error || 'The analysis could not be completed.'} />
@@ -210,7 +218,13 @@ function FindingsView({ findings, status, summary, error, repositoryUrl, analysi
     downloadMarkdownFile(file)
   }
   const counts = severityCounts(findings)
-  const orderedFindings = sortFindings(findings)
+  const orderedFindings = sortFindings(findings, sort)
+  const toggleSort = (column: FindingColumnKey) => setSort((current) => toggleFindingSort(current, column))
+  const toggleColumn = (column: FindingColumnKey) => {
+    const next = visibleColumns.includes(column) ? visibleColumns.filter((key) => key !== column) : [...visibleColumns, column]
+    setVisibleColumns(next)
+    setSort((current) => reconcileFindingSort(current, next))
+  }
   return (
     <section className="page-grid">
       <div className="finding-summary" aria-label="Finding severity summary">
@@ -224,34 +238,61 @@ function FindingsView({ findings, status, summary, error, repositoryUrl, analysi
       <div className="panel table-panel">
         <div className="panel-title">
           <span>Findings ({findings.length})</span>
-          <button className="secondary-button" onClick={exportFindings} type="button">Export findings (.md)</button>
+          <div className="table-actions">
+            <details className="column-picker">
+              <summary>Columns</summary>
+              <fieldset>
+                <legend className="sr-only">Choose visible columns</legend>
+                {FINDING_COLUMNS.map(({ key, label }) => (
+                  <label key={key}>
+                    <input checked={visibleColumns.includes(key)} onChange={() => toggleColumn(key)} type="checkbox" />
+                    {label}
+                  </label>
+                ))}
+              </fieldset>
+            </details>
+            <button className="secondary-button" onClick={exportFindings} type="button">Export findings (.md)</button>
+          </div>
         </div>
-        <div className="findings-table-wrap">
-          <table className="findings-table">
-            <caption className="sr-only">Repository findings sorted by severity</caption>
-            <thead>
-              <tr><th scope="col">Description</th><th scope="col">Severity</th><th scope="col">Type</th></tr>
-            </thead>
-            <tbody>
-              {orderedFindings.map((finding) => {
-                const severity = displaySeverity(finding.severity)
-                return (
-                  <tr key={`${finding.analyzer}-${finding.path}-${finding.start_line}-${finding.rule_id}`}>
-                    <td data-label="Description">
-                      <strong>{finding.message}</strong>
-                      <small className="finding-meta">
-                        <code>{finding.path}:{finding.start_line}{finding.end_line !== finding.start_line ? `-${finding.end_line}` : ''}</code>
-                        <span>{finding.rule_id} · {finding.analyzer}</span>
-                      </small>
-                    </td>
-                    <td data-label="Severity"><span className={`severity-badge severity-${severity}`}>{severity}</span></td>
-                    <td data-label="Type"><span className="category-badge">{categoryLabel(finding.category)}</span></td>
-                  </tr>
-                )
-              })}
-            </tbody>
-          </table>
-        </div>
+        {visibleColumns.length === 0 ? (
+          <EmptyState title="No columns visible" description="Use the Columns menu above to show at least one finding column." compact />
+        ) : (
+          <div className="findings-table-wrap">
+            <table className="findings-table">
+              <caption className="sr-only">Repository findings sorted by {sort.column}</caption>
+              <thead>
+                <tr>
+                  {FINDING_COLUMNS.filter(({ key }) => visibleColumns.includes(key)).map(({ key, label }) => (
+                    <th aria-sort={sort.column === key ? (sort.direction === 'asc' ? 'ascending' : 'descending') : 'none'} key={key} scope="col">
+                      <button className="table-sort-button" onClick={() => toggleSort(key)} type="button">
+                        {label}
+                        {sort.column === key && <span aria-hidden="true" className="sort-indicator">{sort.direction === 'asc' ? '↑' : '↓'}</span>}
+                      </button>
+                    </th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {orderedFindings.map((finding) => {
+                  const severity = displaySeverity(finding.severity)
+                  return (
+                    <tr key={`${finding.analyzer}-${finding.path}-${finding.start_line}-${finding.rule_id}`}>
+                      {visibleColumns.includes('description') && <td data-label="Description">
+                        <strong>{finding.message}</strong>
+                        <small className="finding-meta">
+                          <code>{finding.path}:{finding.start_line}{finding.end_line !== finding.start_line ? `-${finding.end_line}` : ''}</code>
+                          <span>{finding.rule_id} · {finding.analyzer}</span>
+                        </small>
+                      </td>}
+                      {visibleColumns.includes('severity') && <td data-label="Severity"><span className={`severity-badge severity-${severity}`}>{severity}</span></td>}
+                      {visibleColumns.includes('type') && <td data-label="Type"><span className="category-badge">{categoryLabel(finding.category)}</span></td>}
+                    </tr>
+                  )
+                })}
+              </tbody>
+            </table>
+          </div>
+        )}
       </div>
     </section>
   )
