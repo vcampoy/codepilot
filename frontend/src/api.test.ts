@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { createAnalysis, getAnalysisFindings, getAnalysisStatus, getAnalysisSummary } from './api'
+import { createAnalysis, getAnalysisFileDetail, getAnalysisFiles, getAnalysisFindings, getAnalysisHotspots, getAnalysisStatus, getAnalysisSummary } from './api'
 
 afterEach(() => {
   vi.unstubAllGlobals()
@@ -79,6 +79,41 @@ describe('analysis API client', () => {
     ])
     expect(fetch).toHaveBeenCalledWith(
       'http://localhost:8000/api/v1/analyses/analysis-1/findings',
+      expect.any(Object),
+    )
+  })
+
+  it('requests hotspots and file detail for the selected analysis', async () => {
+    const calls: string[] = []
+    vi.stubGlobal('fetch', vi.fn(async (url: string) => {
+      calls.push(url)
+      return new Response(JSON.stringify(url.includes('/hotspots') ? [] : { path: 'src/a.py' }), { status: 200 })
+    }))
+
+    await expect(getAnalysisHotspots('analysis-1')).resolves.toEqual([])
+    await expect(getAnalysisFileDetail('analysis-1', 'src/a.py')).resolves.toEqual({ path: 'src/a.py' })
+    expect(calls).toEqual([
+      'http://localhost:8000/api/v1/analyses/analysis-1/hotspots?limit=20',
+      'http://localhost:8000/api/v1/analyses/analysis-1/files/detail?path=src%2Fa.py',
+    ])
+  })
+
+  it('requests the paginated file insight catalog', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue(
+        new Response(JSON.stringify({ items: [], total: 0, limit: 100, offset: 0 }), { status: 200 }),
+      ),
+    )
+
+    await expect(getAnalysisFiles('analysis-1')).resolves.toEqual({
+      items: [],
+      total: 0,
+      limit: 100,
+      offset: 0,
+    })
+    expect(fetch).toHaveBeenCalledWith(
+      'http://localhost:8000/api/v1/analyses/analysis-1/files?limit=100&offset=0',
       expect.any(Object),
     )
   })

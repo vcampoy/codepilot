@@ -6,10 +6,15 @@ import {
   getAnalysisStatus,
   getAnalysisSummary,
   getAnalysisFindings,
+  getAnalysisFileDetail,
+  getAnalysisHotspots,
+  getAnalysisFiles,
   requestEnrichment,
   type AnalysisStatus,
   type AnalysisSummaryResponse,
   type AnalysisFinding,
+  type FileDetail,
+  type FileInsight,
   type EnrichmentResponse,
 } from './api'
 import { createFindingsMarkdownExport, downloadMarkdownFile } from './findingsExport'
@@ -51,6 +56,16 @@ function App() {
   const [status, setStatus] = useState<AnalysisStatus | null>(null)
   const [summary, setSummary] = useState<AnalysisSummaryResponse['summary']>(null)
   const [findings, setFindings] = useState<AnalysisFinding[]>([])
+  const [hotspots, setHotspots] = useState<FileInsight[]>([])
+  const [fileInsights, setFileInsights] = useState<FileInsight[]>([])
+  const [findingsError, setFindingsError] = useState<string | null>(null)
+  const [hotspotsError, setHotspotsError] = useState<string | null>(null)
+  const [filesError, setFilesError] = useState<string | null>(null)
+  const [resultsBusy, setResultsBusy] = useState(false)
+  const [selectedFilePath, setSelectedFilePath] = useState<string | null>(null)
+  const [fileDetail, setFileDetail] = useState<FileDetail | null>(null)
+  const [fileDetailBusy, setFileDetailBusy] = useState(false)
+  const [fileDetailError, setFileDetailError] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
@@ -72,7 +87,6 @@ function App() {
         if (!cancelled) {
           setStatus(nextStatus.status)
           setSummary(nextSummary.summary)
-          if (nextStatus.status === 'completed') getAnalysisFindings(analysisId).then(setFindings).catch(() => setFindings([]))
           setError(nextStatus.failure_message)
         }
       } catch (pollError) {
@@ -86,6 +100,70 @@ function App() {
       window.clearInterval(timer)
     }
   }, [analysisId, status])
+
+  useEffect(() => {
+    if (!analysisId || status !== 'completed') return
+    const controller = new AbortController()
+    setResultsBusy(true)
+    setFindingsError(null)
+    setHotspotsError(null)
+    setFilesError(null)
+    const requestOptions = { signal: controller.signal }
+    const loadFindings = async () => {
+      try {
+        setFindings(await getAnalysisFindings(analysisId, requestOptions))
+      } catch (loadError) {
+        if (!controller.signal.aborted) {
+          setFindingsError(loadError instanceof Error ? loadError.message : 'Findings unavailable.')
+        }
+      }
+    }
+    const loadHotspots = async () => {
+      try {
+        setHotspots(await getAnalysisHotspots(analysisId, 20, requestOptions))
+      } catch (loadError) {
+        if (!controller.signal.aborted) {
+          setHotspotsError(loadError instanceof Error ? loadError.message : 'Hotspots unavailable.')
+        }
+      }
+    }
+    const loadFiles = async () => {
+      try {
+        setFileInsights((await getAnalysisFiles(analysisId, 100, 0, requestOptions)).items)
+      } catch (loadError) {
+        if (!controller.signal.aborted) {
+          setFilesError(loadError instanceof Error ? loadError.message : 'File catalog unavailable.')
+        }
+      }
+    }
+    void Promise.all([loadFindings(), loadHotspots(), loadFiles()]).finally(() => {
+      if (!controller.signal.aborted) setResultsBusy(false)
+    })
+    return () => controller.abort()
+  }, [analysisId, status])
+
+  useEffect(() => {
+    if (status === 'completed' && !selectedFilePath && fileInsights.length > 0) {
+      setSelectedFilePath(fileInsights[0].path)
+    }
+  }, [fileInsights, selectedFilePath, status])
+
+  useEffect(() => {
+    if (!analysisId || status !== 'completed' || !selectedFilePath) {
+      setFileDetail(null)
+      return
+    }
+    const controller = new AbortController()
+    setFileDetailBusy(true)
+    setFileDetailError(null)
+    void getAnalysisFileDetail(analysisId, selectedFilePath, { signal: controller.signal })
+      .then((detail) => { if (!controller.signal.aborted) setFileDetail(detail) })
+      .catch((detailError) => {
+        if (!controller.signal.aborted) setFileDetailError(detailError instanceof Error ? detailError.message : 'File detail unavailable.')
+      })
+      .finally(() => { if (!controller.signal.aborted) setFileDetailBusy(false) })
+    return () => controller.abort()
+  }, [analysisId, selectedFilePath, status])
 
   const navigate = (next: View) => {
     window.location.hash = next
@@ -104,6 +182,12 @@ function App() {
       setStatus(accepted.status)
       setSummary(null)
       setFindings([])
+      setHotspots([])
+      setFileInsights([])
+      setFindingsError(null)
+      setHotspotsError(null)
+      setFilesError(null)
+      setSelectedFilePath(null)
       navigate('overview')
     } catch (submitError) {
       setError(submitError instanceof Error ? submitError.message : 'Could not queue analysis.')
@@ -184,16 +268,16 @@ function App() {
 
         {activeView === 'analyses' && <HistoryView analysisId={analysisId} status={status} />}
         {activeView === 'overview' && <OverviewView analysisId={analysisId} status={status} summary={summary} />}
-        {activeView === 'findings' && <FindingsView findings={findings} status={status} summary={summary} error={error} repositoryUrl={analyzedRepositoryUrl} analysisId={analysisId} />}
-        {activeView === 'hotspots' && <GraphView />}
-        {activeView === 'files' && <EmptyState title="Select a file from findings" description="File-level score breakdowns will appear when finding data is available." />}
-        {activeView === 'quality' && <QualityGateView />}
+        {activeView === 'findings' && <FindingsView findings={findings} status={status} summary={summary} error={error || findingsError} repositoryUrl={analyzedRepositoryUrl} analysisId={analysisId} onSelectPath={(path) => { setSelectedFilePath(path); navigate('files') }} />}
+        {activeView === 'hotspots' && <HotspotsView hotspots={hotspots} status={status} error={hotspotsError} onSelectPath={(path) => { setSelectedFilePath(path); navigate('files') }} />}
+        {activeView === 'files' && <FileDetailView detail={fileDetail} path={selectedFilePath} files={fileInsights} status={status} busy={fileDetailBusy || resultsBusy} error={fileDetailError} catalogError={filesError} onSelectPath={setSelectedFilePath} />}
+        {activeView === 'quality' && <QualityGateView summary={summary} />}
       </main>
     </div>
   )
 }
 
-function FindingsView({ findings, status, summary, error, repositoryUrl, analysisId }: { findings: AnalysisFinding[]; status: AnalysisStatus | null; summary: AnalysisSummaryResponse['summary']; error: string | null; repositoryUrl: string | null; analysisId: string | null }) {
+function FindingsView({ findings, status, summary, error, repositoryUrl, analysisId, onSelectPath }: { findings: AnalysisFinding[]; status: AnalysisStatus | null; summary: AnalysisSummaryResponse['summary']; error: string | null; repositoryUrl: string | null; analysisId: string | null; onSelectPath: (path: string) => void }) {
   const [sort, setSort] = useState<FindingSort>({ column: 'severity', direction: 'desc' })
   const [visibleColumns, setVisibleColumns] = useState<FindingColumnKey[]>(() => FINDING_COLUMNS.map(({ key }) => key))
 
@@ -280,7 +364,7 @@ function FindingsView({ findings, status, summary, error, repositoryUrl, analysi
                       {visibleColumns.includes('description') && <td data-label="Description">
                         <strong>{finding.message}</strong>
                         <small className="finding-meta">
-                          <code>{finding.path}:{finding.start_line}{finding.end_line !== finding.start_line ? `-${finding.end_line}` : ''}</code>
+                          <button className="path-link" onClick={() => onSelectPath(finding.path)} type="button"><code>{finding.path}:{finding.start_line}{finding.end_line !== finding.start_line ? `-${finding.end_line}` : ''}</code></button>
                           <span>{finding.rule_id} · {finding.analyzer}</span>
                         </small>
                       </td>}
@@ -303,8 +387,9 @@ function OverviewView({ analysisId, status, summary }: { analysisId: string | nu
   const [enrichmentBusy, setEnrichmentBusy] = useState(false)
   const [enrichmentError, setEnrichmentError] = useState<string | null>(null)
   const severityTotal = summary ? Object.values(summary.finding_count_by_severity).reduce((total, value) => total + value, 0) : null
+  const risk = summary?.risk_assessment
   const cards = [
-    ['Risk score', '-', 'Risk model data pending'],
+    ['Risk score', risk ? `${risk.score.toFixed(2)} (${risk.category})` : '—', risk ? `Version ${risk.version}` : 'Risk model data unavailable'],
     ['Findings', severityTotal === null ? 'â€”' : String(severityTotal), 'From completed analyzer output'],
     ['Files analyzed', summary ? String(summary.analyzed_file_count) : 'â€”', 'Repository evidence'],
     ['Duration', summary ? `${summary.duration_seconds.toFixed(1)}s` : 'â€”', 'Worker execution time'],
@@ -328,12 +413,27 @@ function HistoryView({ analysisId, status }: { analysisId: string | null; status
   return <section className="page-grid"><div className="panel table-panel"><div className="panel-title"><span>Analysis history</span><span className="muted">Latest first</span></div>{analysisId ? <div className="history-row"><code>{analysisId}</code><span className={`status-badge status-${status}`}>{status}</span><button type="button" onClick={() => { window.location.hash = 'overview' }}>Open overview</button></div> : <EmptyState title="No analyses" description="Submit a repository to create your first analysis run." compact />}</div></section>
 }
 
-function GraphView() {
-  return <section className="page-grid"><div className="panel graph-placeholder"><div className="panel-title"><span>Dependency graph</span><span className="muted">Bounded view</span></div><div className="graph-lines"><span /><span /><span /><span /></div><EmptyState title="Graph data pending" description="The graph view will render bounded structural evidence when the analysis API returns dependency edges." compact /></div><div className="metric-grid"><article className="metric-card"><span>Cycles</span><strong>-</strong><small>Structural evidence only</small></article><article className="metric-card"><span>Top hotspot</span><strong>-</strong><small>No fabricated metrics</small></article></div></section>
+function HotspotsView({ hotspots, status, error, onSelectPath }: { hotspots: FileInsight[]; status: AnalysisStatus | null; error: string | null; onSelectPath: (path: string) => void }) {
+  if (status !== 'completed') return <EmptyState title="Hotspots pending" description="Hotspots appear after deterministic analysis completes." />
+  if (error && hotspots.length === 0) return <EmptyState title="Hotspots unavailable" description={error} />
+  if (hotspots.length === 0) return <EmptyState title="No hotspots" description="No file reached the configured hotspot threshold." />
+  return <section className="page-grid"><div className="panel table-panel"><div className="panel-title"><span>Hotspots ({hotspots.length})</span><span className="muted">Highest evidence-backed scores</span></div><div className="findings-table-wrap"><table className="findings-table"><thead><tr><th scope="col">File</th><th scope="col">Hotspot score</th><th scope="col">Risk</th><th scope="col">Components</th></tr></thead><tbody>{hotspots.map((hotspot) => <tr key={hotspot.path}><td><button className="path-link" onClick={() => onSelectPath(hotspot.path)} type="button"><code>{hotspot.path}</code></button></td><td>{hotspot.hotspot_score.toFixed(2)}</td><td>{hotspot.risk ? `${hotspot.risk.score.toFixed(2)} (${hotspot.risk.category})` : 'Unavailable'}</td><td>{Object.entries(hotspot.metrics).map(([name, value]) => `${name}: ${value.toFixed(2)}`).join(' · ') || 'Unavailable'}</td></tr>)}</tbody></table></div></div></section>
 }
 
-function QualityGateView() {
-  return <section className="page-grid"><div className="panel"><div className="panel-title"><span>Quality gate</span><span className="muted">Evidence only</span></div><EmptyState title="Quality-gate result pending" description="The API will report pass or fail criteria after quality-gate evaluation is connected to an analysis run." compact /></div></section>
+function FileDetailView({ detail, path, files, status, busy, error, catalogError, onSelectPath }: { detail: FileDetail | null; path: string | null; files: FileInsight[]; status: AnalysisStatus | null; busy: boolean; error: string | null; catalogError: string | null; onSelectPath: (path: string) => void }) {
+  if (status !== 'completed') return <EmptyState title="File detail pending" description="File-level evidence appears after deterministic analysis completes." />
+  if (catalogError && files.length === 0 && !path) return <EmptyState title="File catalog unavailable" description={catalogError} />
+  if (!path && files.length === 0) return <EmptyState title="No file evidence" description="The completed analysis did not include file-level evidence." />
+  if (busy) return <EmptyState title="Loading file detail" description={`Loading evidence for ${path}.`} />
+  if (error || !detail) return <EmptyState title="File detail unavailable" description={error || 'No stored evidence exists for this file.'} />
+  return <section className="page-grid"><div className="panel file-picker"><label htmlFor="file-select">File</label><select id="file-select" value={path || ''} onChange={(event) => onSelectPath(event.target.value)}>{files.map((file) => <option key={file.path} value={file.path}>{file.path}</option>)}</select></div><div className="section-heading"><div><p className="kicker">File evidence</p><h2><code>{detail.path}</code></h2></div><span className="status-badge status-completed">completed</span></div><div className="metric-grid"><article className="metric-card"><span>Hotspot score</span><strong>{detail.hotspot_score.toFixed(2)}</strong><small>History and finding evidence</small></article><article className="metric-card"><span>Risk</span><strong>{detail.risk ? detail.risk.score.toFixed(2) : '—'}</strong><small>{detail.risk ? `${detail.risk.category} · v${detail.risk.version}` : 'Unavailable'}</small></article><article className="metric-card"><span>Findings</span><strong>{detail.findings.length}</strong><small>Stored analyzer evidence</small></article></div><div className="panel"><div className="panel-title"><span>Risk components</span><span className="muted">Normalized values</span></div>{Object.entries(detail.risk?.components ?? {}).map(([name, value]) => <div className="availability-row" key={name}><span>{name}</span><strong>{value.toFixed(2)}</strong></div>)}</div><div className="panel"><div className="panel-title"><span>Findings in file</span></div>{detail.findings.length ? detail.findings.map((finding) => <div className="availability-row" key={`${finding.rule_id}-${finding.start_line}`}><span>{finding.message}</span><span className={`severity-badge severity-${finding.severity}`}>{finding.severity}</span></div>) : <EmptyState title="No findings" description="No finding is attached to this file." compact />}</div></section>
+}
+
+function QualityGateView({ summary }: { summary: AnalysisSummaryResponse['summary'] }) {
+  if (!summary?.quality_gate) return <section className="page-grid"><div className="panel"><div className="panel-title"><span>Quality gate</span><span className="muted">Evidence only</span></div><EmptyState title="Quality-gate data unavailable" description="The completed analysis did not include a quality-gate evaluation." compact /></div></section>
+  const gate = summary.quality_gate
+  const observed = gate.observed
+  return <section className="page-grid"><div className="panel"><div className="panel-title"><span>Quality gate</span><span className={`status-badge status-${gate.status === 'failed' ? 'failed' : 'completed'}`}>{gate.status === 'not_configured' ? 'not configured' : gate.passed ? 'passed' : 'failed'}</span></div><div className="metric-grid"><article className="metric-card"><span>Risk score</span><strong>{observed.risk_score === null ? '—' : observed.risk_score.toFixed(2)}</strong><small>Observed in this analysis</small></article><article className="metric-card"><span>New critical findings</span><strong>{observed.new_critical_findings}</strong><small>Compared with baseline</small></article><article className="metric-card"><span>New hotspots</span><strong>{observed.new_hotspots}</strong><small>Compared with baseline</small></article></div>{gate.status === 'not_configured' && <EmptyState title="Quality gate not configured" description="Configure at least one quality-gate threshold to evaluate this analysis." compact />}{gate.failures.length ? gate.failures.map((failure) => <div className="availability-row" key={failure.code}><strong>{failure.code}</strong><span>{failure.detail}</span></div>) : gate.status !== 'not_configured' && <EmptyState title="All configured rules passed" description="No quality-gate failure was reported." compact />}</div></section>
 }
 
 function EmptyState({ title, description, compact = false }: { title: string; description: string; compact?: boolean }) {

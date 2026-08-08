@@ -51,6 +51,12 @@ def test_quality_gates_prioritize_new_findings_and_explain_failures() -> None:
         "hotspots",
     }
     assert "legacy-critical" not in {failure.detail for failure in result.failures}
+    assert result.thresholds.max_new_critical_findings == 0
+    assert result.thresholds.max_risk_score == 0.7
+    assert result.thresholds.max_new_hotspots == 3
+    assert result.observed.new_critical_findings == 1
+    assert result.observed.risk_score == 0.8
+    assert result.observed.new_hotspots == 4
 
 
 def test_empty_components_have_zero_risk_without_fake_precision() -> None:

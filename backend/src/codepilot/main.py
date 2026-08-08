@@ -9,6 +9,7 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
+from codepilot.analyzers.risk_score import QualityGateConfig
 from codepilot.api.router import router
 from codepilot.core.errors import (
     ApplicationError,
@@ -91,6 +92,11 @@ def create_app(
             NoopAnalyzer(),
             queue_for_celery(),
             lease_seconds=resolved_settings.analysis_lease_seconds,
+            quality_gate_config=QualityGateConfig(
+                max_new_critical_findings=resolved_settings.quality_gate_max_new_critical_findings,
+                max_risk_score=resolved_settings.quality_gate_max_risk_score,
+                max_new_hotspots=resolved_settings.quality_gate_max_new_hotspots,
+            ),
         )
     else:
         assert analysis_service is not None

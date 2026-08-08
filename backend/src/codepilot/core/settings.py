@@ -65,6 +65,9 @@ class Settings(BaseSettings):
     rate_limit_requests: Annotated[int, Field(gt=0, le=100_000)] = 120
     rate_limit_window_seconds: Annotated[int, Field(gt=0, le=86_400)] = 60
     workspace_analysis_quota: Annotated[int, Field(gt=0, le=1_000_000)] = 100
+    quality_gate_max_new_critical_findings: Annotated[int | None, Field(ge=0)] = None
+    quality_gate_max_risk_score: Annotated[float | None, Field(ge=0, le=1)] = None
+    quality_gate_max_new_hotspots: Annotated[int | None, Field(ge=0)] = None
     observability_enabled: bool = False
     otel_service_name: str = "codepilot-api"
     error_reporting_dsn: SecretStr | None = None

@@ -13,6 +13,7 @@ from sqlalchemy import (
     Boolean,
     Column,
     DateTime,
+    Float,
     ForeignKey,
     Integer,
     MetaData,
@@ -30,6 +31,13 @@ from sqlalchemy import (
 from sqlalchemy.dialects.postgresql import insert as postgresql_insert
 from sqlalchemy.ext.asyncio import AsyncEngine, create_async_engine
 
+from codepilot.analyzers.risk_score import (
+    QualityGateFailure,
+    QualityGateObserved,
+    QualityGateResult,
+    QualityGateThresholds,
+    RiskAssessment,
+)
 from codepilot.domain.analysis import (
     AnalysisFinding,
     AnalysisNotFoundError,
@@ -41,6 +49,7 @@ from codepilot.domain.analysis import (
     InvalidAnalysisTransitionError,
     fingerprint_finding,
 )
+from codepilot.domain.insights import FileInsight
 
 
 class AnalysisRepository(Protocol):
@@ -52,6 +61,15 @@ class AnalysisRepository(Protocol):
 
     async def get(
         self, analysis_id: UUID, workspace_id: str | None = None
+    ) -> AnalysisRecord | None: ...
+
+    async def find_latest_completed(
+        self,
+        repository_url: str,
+        workspace_id: str,
+        *,
+        before: datetime,
+        exclude_analysis_id: UUID,
     ) -> AnalysisRecord | None: ...
 
     async def claim_running(
@@ -96,6 +114,15 @@ class AnalysisRepository(Protocol):
 
     async def get_findings(self, analysis_id: UUID) -> tuple[AnalysisFinding, ...]: ...
 
+    async def persist_file_insights(
+        self,
+        analysis_id: UUID,
+        insights: Sequence[FileInsight],
+        *,
+        lease_token: UUID | None = None,
+        now: datetime | None = None,
+    ) -> None: ...
+
     async def complete(
         self,
         analysis_id: UUID,
@@ -129,6 +156,7 @@ class InMemoryAnalysisRepository:
     def __init__(self) -> None:
         self._records: dict[UUID, AnalysisRecord] = {}
         self._findings: dict[UUID, dict[str, AnalysisFinding]] = {}
+        self._file_insights: dict[UUID, tuple[FileInsight, ...]] = {}
         self._lock = asyncio.Lock()
 
     async def create(self, repository_url: str, workspace_id: str = "default") -> AnalysisRecord:
@@ -138,6 +166,7 @@ class InMemoryAnalysisRepository:
             )
             self._records[record.analysis_id] = record
             self._findings[record.analysis_id] = {}
+            self._file_insights[record.analysis_id] = ()
             return _copy_record(record)
 
     async def get(
@@ -152,6 +181,27 @@ class InMemoryAnalysisRepository:
             ):
                 return None
             return _copy_record(record) if record is not None else None
+
+    async def find_latest_completed(
+        self,
+        repository_url: str,
+        workspace_id: str,
+        *,
+        before: datetime,
+        exclude_analysis_id: UUID,
+    ) -> AnalysisRecord | None:
+        async with self._lock:
+            candidates = [
+                record
+                for record in self._records.values()
+                if record.analysis_id != exclude_analysis_id
+                and record.repository_url == repository_url
+                and record.workspace_id == workspace_id
+                and record.status is AnalysisStatus.COMPLETED
+                and record.created_at < before
+            ]
+            latest = max(candidates, key=lambda record: record.created_at, default=None)
+            return _copy_record(latest) if latest is not None else None
 
     async def claim_running(
         self,
@@ -276,6 +326,19 @@ class InMemoryAnalysisRepository:
         async with self._lock:
             self._require(analysis_id)
             return tuple(self._findings[analysis_id].values())
+
+    async def persist_file_insights(
+        self,
+        analysis_id: UUID,
+        insights: Sequence[FileInsight],
+        *,
+        lease_token: UUID | None = None,
+        now: datetime | None = None,
+    ) -> None:
+        async with self._lock:
+            record = self._require(analysis_id)
+            self._require_running(record, lease_token, now)
+            self._file_insights[analysis_id] = tuple(insights)
 
     async def complete(
         self,
@@ -431,6 +494,21 @@ _FINDINGS = Table(
     Column("remediation", Text),
     UniqueConstraint("analysis_id", "fingerprint", name="uq_analysis_finding_fingerprint"),
 )
+_FILE_INSIGHTS = Table(
+    "codepilot_analysis_file_insights",
+    _METADATA,
+    Column(
+        "analysis_id",
+        Uuid(as_uuid=True),
+        ForeignKey("codepilot_analyses.analysis_id"),
+        nullable=False,
+    ),
+    Column("path", String(2048), nullable=False),
+    Column("hotspot_score", Float, nullable=False),
+    Column("metrics", JSON, nullable=False),
+    Column("risk", JSON),
+    UniqueConstraint("analysis_id", "path", name="uq_analysis_file_insight_path"),
+)
 
 
 class PostgresAnalysisRepository:
@@ -468,6 +546,30 @@ class PostgresAnalysisRepository:
             if workspace_id is not None:
                 conditions.append(_ANALYSES.c.workspace_id == workspace_id)
             result = await connection.execute(select(_ANALYSES).where(and_(*conditions)))
+            row = result.mappings().one_or_none()
+        return _record_from_row(row) if row is not None else None
+
+    async def find_latest_completed(
+        self,
+        repository_url: str,
+        workspace_id: str,
+        *,
+        before: datetime,
+        exclude_analysis_id: UUID,
+    ) -> AnalysisRecord | None:
+        async with self._engine.connect() as connection:
+            result = await connection.execute(
+                select(_ANALYSES)
+                .where(
+                    _ANALYSES.c.repository_url == repository_url,
+                    _ANALYSES.c.workspace_id == workspace_id,
+                    _ANALYSES.c.status == AnalysisStatus.COMPLETED.value,
+                    _ANALYSES.c.created_at < before,
+                    _ANALYSES.c.analysis_id != exclude_analysis_id,
+                )
+                .order_by(_ANALYSES.c.created_at.desc())
+                .limit(1)
+            )
             row = result.mappings().one_or_none()
         return _record_from_row(row) if row is not None else None
 
@@ -670,6 +772,32 @@ class PostgresAnalysisRepository:
             )
             rows = result.mappings().all()
         return tuple(_finding_from_row(row) for row in rows)
+
+    async def persist_file_insights(
+        self,
+        analysis_id: UUID,
+        insights: Sequence[FileInsight],
+        *,
+        lease_token: UUID | None = None,
+        now: datetime | None = None,
+    ) -> None:
+        values = [
+            {
+                "analysis_id": analysis_id,
+                "path": insight.path,
+                "hotspot_score": insight.hotspot_score,
+                "metrics": insight.metrics,
+                "risk": _risk_to_json(insight.risk) if insight.risk else None,
+            }
+            for insight in insights
+        ]
+        async with self._engine.begin() as connection:
+            await self._require_running(connection, analysis_id, lease_token, now)
+            await connection.execute(
+                _FILE_INSIGHTS.delete().where(_FILE_INSIGHTS.c.analysis_id == analysis_id)
+            )
+            if values:
+                await connection.execute(_FILE_INSIGHTS.insert(), values)
 
     async def complete(
         self,
@@ -897,7 +1025,7 @@ def _paths_match(left: str, right: str) -> bool:
 
 
 def _summary_to_json(summary: AnalysisSummary) -> dict[str, object]:
-    return {
+    payload: dict[str, object] = {
         "analyzed_file_count": summary.analyzed_file_count,
         "source_lines": summary.source_lines,
         "finding_count_by_severity": summary.finding_count_by_severity,
@@ -916,11 +1044,48 @@ def _summary_to_json(summary: AnalysisSummary) -> dict[str, object]:
             for item in summary.analyzer_outcomes
         ],
     }
+    if summary.risk_assessment is not None:
+        payload["risk_assessment"] = _risk_to_json(summary.risk_assessment)
+    if summary.quality_gate is not None:
+        payload["quality_gate"] = {
+            "passed": summary.quality_gate.passed,
+            "configured": summary.quality_gate.configured,
+            "failures": [
+                {"code": failure.code, "detail": failure.detail}
+                for failure in summary.quality_gate.failures
+            ],
+            "thresholds": {
+                "max_new_critical_findings": (
+                    summary.quality_gate.thresholds.max_new_critical_findings
+                ),
+                "max_risk_score": summary.quality_gate.thresholds.max_risk_score,
+                "max_new_hotspots": summary.quality_gate.thresholds.max_new_hotspots,
+            },
+            "observed": {
+                "new_critical_findings": summary.quality_gate.observed.new_critical_findings,
+                "risk_score": summary.quality_gate.observed.risk_score,
+                "new_hotspots": summary.quality_gate.observed.new_hotspots,
+            },
+        }
+    if summary.baseline_analysis_id is not None:
+        payload["baseline_analysis_id"] = str(summary.baseline_analysis_id)
+    if summary.file_insights:
+        payload["file_insights"] = [
+            {
+                "path": insight.path,
+                "hotspot_score": insight.hotspot_score,
+                "metrics": insight.metrics,
+                "risk": _risk_to_json(insight.risk) if insight.risk else None,
+            }
+            for insight in summary.file_insights
+        ]
+    return payload
 
 
 def _summary_from_json(value: Any) -> AnalysisSummary | None:
     if value is None:
         return None
+    gate_payload = value.get("quality_gate")
     return AnalysisSummary(
         analyzed_file_count=int(value["analyzed_file_count"]),
         source_lines=int(value["source_lines"]),
@@ -941,4 +1106,84 @@ def _summary_from_json(value: Any) -> AnalysisSummary | None:
             )
             for item in value.get("analyzer_outcomes", [])
         ),
+        risk_assessment=_risk_from_json(value.get("risk_assessment")),
+        quality_gate=(
+            QualityGateResult(
+                bool(gate_payload.get("passed")),
+                tuple(
+                    QualityGateFailure(str(item["code"]), str(item["detail"]))
+                    for item in gate_payload.get("failures", [])
+                ),
+                bool(gate_payload.get("configured", True)),
+                thresholds=QualityGateThresholds(
+                    max_new_critical_findings=_optional_int(
+                        gate_payload.get("thresholds", {}).get("max_new_critical_findings")
+                    ),
+                    max_risk_score=_optional_float(
+                        gate_payload.get("thresholds", {}).get("max_risk_score")
+                    ),
+                    max_new_hotspots=_optional_int(
+                        gate_payload.get("thresholds", {}).get("max_new_hotspots")
+                    ),
+                ),
+                observed=QualityGateObserved(
+                    new_critical_findings=int(
+                        gate_payload.get("observed", {}).get("new_critical_findings", 0)
+                    ),
+                    risk_score=_optional_float(gate_payload.get("observed", {}).get("risk_score")),
+                    new_hotspots=int(gate_payload.get("observed", {}).get("new_hotspots", 0)),
+                ),
+            )
+            if gate_payload is not None
+            else None
+        ),
+        baseline_analysis_id=(
+            UUID(str(value["baseline_analysis_id"]))
+            if value.get("baseline_analysis_id")
+            else None
+        ),
+        file_insights=tuple(
+            FileInsight(
+                path=str(item["path"]),
+                hotspot_score=float(item["hotspot_score"]),
+                risk=_risk_from_json(item.get("risk")),
+                metrics={
+                    str(key): float(metric)
+                    for key, metric in dict(item.get("metrics", {})).items()
+                },
+            )
+            for item in value.get("file_insights", [])
+        ),
+    )
+
+
+def _risk_to_json(risk: RiskAssessment) -> dict[str, object]:
+    return {
+        "score": risk.score,
+        "category": risk.category,
+        "version": risk.version,
+        "components": risk.components,
+        "weights": risk.weights,
+    }
+
+
+def _optional_int(value: Any) -> int | None:
+    return int(value) if value is not None else None
+
+
+def _optional_float(value: Any) -> float | None:
+    return float(value) if value is not None else None
+
+
+def _risk_from_json(value: Any) -> RiskAssessment | None:
+    if value is None:
+        return None
+    return RiskAssessment(
+        score=float(value["score"]),
+        category=str(value["category"]),
+        version=str(value["version"]),
+        components={
+            str(key): float(item) for key, item in dict(value.get("components", {})).items()
+        },
+        weights={str(key): float(item) for key, item in dict(value.get("weights", {})).items()},
     )

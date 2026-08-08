@@ -71,9 +71,38 @@ class QualityGateFailure:
 
 
 @dataclass(frozen=True, slots=True)
+class QualityGateThresholds:
+    """Thresholds captured with a gate so its configuration is auditable."""
+
+    max_new_critical_findings: int | None = None
+    max_risk_score: float | None = None
+    max_new_hotspots: int | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class QualityGateObserved:
+    """Evidence evaluated by a quality gate."""
+
+    new_critical_findings: int
+    risk_score: float | None
+    new_hotspots: int
+
+
+@dataclass(frozen=True, slots=True)
 class QualityGateResult:
     passed: bool
     failures: tuple[QualityGateFailure, ...]
+    configured: bool = True
+    thresholds: QualityGateThresholds = field(default_factory=QualityGateThresholds)
+    observed: QualityGateObserved = field(
+        default_factory=lambda: QualityGateObserved(0, None, 0)
+    )
+
+    @property
+    def status(self) -> str:
+        if not self.configured:
+            return "not_configured"
+        return "passed" if self.passed else "failed"
 
 
 def calculate_risk(components: Mapping[str, float], config: RiskScoreConfig) -> RiskAssessment:
@@ -134,8 +163,30 @@ def evaluate_quality_gates(
                 f"{new_hotspot_count} new hotspots exceed the limit of {config.max_new_hotspots}.",
             )
         )
-    del hotspot_count
-    return QualityGateResult(not failures, tuple(failures))
+    observed_hotspots = hotspot_count if new_hotspot_count is None else new_hotspot_count
+    configured = any(
+        value is not None
+        for value in (
+            config.max_new_critical_findings,
+            config.max_risk_score,
+            config.max_new_hotspots,
+        )
+    )
+    return QualityGateResult(
+        passed=not failures,
+        failures=tuple(failures),
+        configured=configured,
+        thresholds=QualityGateThresholds(
+            max_new_critical_findings=config.max_new_critical_findings,
+            max_risk_score=config.max_risk_score,
+            max_new_hotspots=config.max_new_hotspots,
+        ),
+        observed=QualityGateObserved(
+            new_critical_findings=len(critical),
+            risk_score=risk_score,
+            new_hotspots=observed_hotspots,
+        ),
+    )
 
 
 def _category(score: float) -> str:

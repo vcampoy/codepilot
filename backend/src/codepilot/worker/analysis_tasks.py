@@ -125,6 +125,7 @@ def create_stale_recovery_task(
 
 def _create_default_service() -> AnalysisService:
     from codepilot.analyzers.production import ProductionRepositoryAnalyzer
+    from codepilot.analyzers.risk_score import QualityGateConfig
     from codepilot.core.settings import Settings
     from codepilot.repositories.analysis import PostgresAnalysisRepository
     from codepilot.services.repository_ingestion import (
@@ -139,6 +140,11 @@ def _create_default_service() -> AnalysisService:
         ProductionRepositoryAnalyzer(tool_timeout_seconds=settings.analysis_timeout_seconds),
         CeleryAnalysisQueue(),
         lease_seconds=settings.analysis_lease_seconds,
+        quality_gate_config=QualityGateConfig(
+            max_new_critical_findings=settings.quality_gate_max_new_critical_findings,
+            max_risk_score=settings.quality_gate_max_risk_score,
+            max_new_hotspots=settings.quality_gate_max_new_hotspots,
+        ),
     )
 
 

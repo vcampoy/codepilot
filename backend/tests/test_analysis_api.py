@@ -11,8 +11,10 @@ import pytest
 from fastapi.testclient import TestClient
 from pydantic import SecretStr
 
+from codepilot.analyzers.risk_score import RiskScoreConfig, calculate_risk
 from codepilot.core.settings import Settings
 from codepilot.domain.analysis import AnalysisFinding, AnalysisResult, AnalyzerOutcome
+from codepilot.domain.insights import FileInsight
 from codepilot.llm.contracts import DeterministicEvidence, EnrichmentResult, EnrichmentTask
 from codepilot.main import create_app
 from codepilot.repositories.analysis import (
@@ -73,6 +75,42 @@ class FindingsAnalyzer:
                     duration_seconds=0.01,
                     generic=True,
                 ),
+            ),
+        )
+
+
+@dataclass
+class InsightsAnalyzer:
+    async def analyze(self, _snapshot: RepositorySnapshot) -> AnalysisResult:
+        risk = calculate_risk({"finding_severity": 0.4}, RiskScoreConfig())
+        return AnalysisResult(
+            analyzed_file_count=3,
+            source_lines=20,
+            findings=(
+                AnalysisFinding(
+                    path="src/main.py",
+                    rule_id="PY001",
+                    severity="warning",
+                    message="Avoid this pattern.",
+                    start_line=4,
+                    end_line=4,
+                ),
+            ),
+            file_insights=(FileInsight("src/main.py", 0.8, risk, {"finding_severity": 0.4}),),
+        )
+
+
+@dataclass
+class PagedInsightsAnalyzer:
+    async def analyze(self, _snapshot: RepositorySnapshot) -> AnalysisResult:
+        return AnalysisResult(
+            analyzed_file_count=3,
+            source_lines=20,
+            findings=(),
+            file_insights=(
+                FileInsight("src/z.py", 0.2, None, {"finding_severity": 0.1}),
+                FileInsight("src/a.py", 0.9, None, {"finding_severity": 0.9}),
+                FileInsight("src/m.py", 0.5, None, {"finding_severity": 0.5}),
             ),
         )
 
@@ -195,6 +233,85 @@ def test_findings_endpoint_returns_persisted_findings_and_summary_outcomes() -> 
     assert summary.json()["summary"]["analyzer_outcomes"][0]["analyzer"] == "generic.file-metrics"
 
 
+def test_insights_endpoints_expose_risk_hotspot_and_file_detail() -> None:
+    repository = InMemoryAnalysisRepository()
+    service = AnalysisService(repository, ApiIngestion(), InsightsAnalyzer(), ApiQueue([]))
+    with TestClient(create_app(analysis_service=service)) as client:
+        accepted = client.post(
+            "/api/v1/analyses",
+            json={"repository_url": "https://github.com/example/project.git"},
+        )
+        analysis_id = accepted.json()["analysis_id"]
+        asyncio.run(service.process_analysis(UUID(analysis_id)))
+        summary = client.get(f"/api/v1/analyses/{analysis_id}/summary")
+        hotspots = client.get(f"/api/v1/analyses/{analysis_id}/hotspots")
+        detail = client.get(
+            f"/api/v1/analyses/{analysis_id}/files/detail",
+            params={"path": "src/main.py"},
+        )
+
+    assert summary.json()["summary"]["risk_assessment"]["score"] == 0.4
+    assert summary.json()["summary"]["quality_gate"]["passed"] is True
+    assert summary.json()["summary"]["quality_gate"]["configured"] is False
+    assert summary.json()["summary"]["quality_gate"]["status"] == "not_configured"
+    assert summary.json()["summary"]["quality_gate"]["observed"] == {
+        "new_critical_findings": 0,
+        "risk_score": 0.4,
+        "new_hotspots": 1,
+    }
+    assert summary.json()["summary"]["quality_gate"]["thresholds"] == {
+        "max_new_critical_findings": None,
+        "max_risk_score": None,
+        "max_new_hotspots": None,
+    }
+    assert hotspots.json()[0]["path"] == "src/main.py"
+    assert detail.json()["path"] == "src/main.py"
+    assert len(detail.json()["findings"]) == 1
+
+
+def test_files_endpoint_returns_paginated_sorted_insights() -> None:
+    repository = InMemoryAnalysisRepository()
+    service = AnalysisService(repository, ApiIngestion(), PagedInsightsAnalyzer(), ApiQueue([]))
+    with TestClient(create_app(analysis_service=service)) as client:
+        accepted = client.post(
+            "/api/v1/analyses",
+            json={"repository_url": "https://github.com/example/project.git"},
+        )
+        analysis_id = accepted.json()["analysis_id"]
+        asyncio.run(service.process_analysis(UUID(analysis_id)))
+        page = client.get(
+            f"/api/v1/analyses/{analysis_id}/files",
+            params={"limit": 2, "offset": 1},
+        )
+
+    assert page.status_code == 200
+    assert page.json()["total"] == 3
+    assert page.json()["limit"] == 2
+    assert page.json()["offset"] == 1
+    assert [item["path"] for item in page.json()["items"]] == ["src/m.py", "src/z.py"]
+
+
+def test_second_analysis_uses_previous_completed_run_as_baseline() -> None:
+    repository = InMemoryAnalysisRepository()
+    service = AnalysisService(repository, ApiIngestion(), InsightsAnalyzer(), ApiQueue([]))
+    with TestClient(create_app(analysis_service=service)) as client:
+        first = client.post(
+            "/api/v1/analyses",
+            json={"repository_url": "https://github.com/example/project.git"},
+        )
+        first_id = first.json()["analysis_id"]
+        asyncio.run(service.process_analysis(UUID(first_id)))
+        second = client.post(
+            "/api/v1/analyses",
+            json={"repository_url": "https://github.com/example/project.git"},
+        )
+        second_id = second.json()["analysis_id"]
+        asyncio.run(service.process_analysis(UUID(second_id)))
+        summary = client.get(f"/api/v1/analyses/{second_id}/summary")
+
+    assert summary.json()["summary"]["baseline_analysis_id"] == first_id
+
+
 def test_unknown_analysis_is_a_safe_not_found_error() -> None:
     _, service = make_service()
     with TestClient(create_app(analysis_service=service)) as client:
@@ -289,3 +406,14 @@ def test_prompt05_deployment_copies_migrations_and_runs_them_before_app_workers(
     assert "condition: service_completed_successfully" in compose
     assert "  beat:" in compose
     assert "--schedule=/tmp/celerybeat-schedule" in compose
+
+
+def test_quality_gate_configuration_is_forwarded_to_analysis_services() -> None:
+    compose = (Path(__file__).parents[2] / "docker-compose.yml").read_text()
+
+    for variable in (
+        "QUALITY_GATE_MAX_NEW_CRITICAL_FINDINGS",
+        "QUALITY_GATE_MAX_RISK_SCORE",
+        "QUALITY_GATE_MAX_NEW_HOTSPOTS",
+    ):
+        assert compose.count(variable) >= 3

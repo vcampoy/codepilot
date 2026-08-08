@@ -13,6 +13,7 @@ from uuid import UUID
 
 from sqlalchemy.exc import DBAPIError, OperationalError
 
+from codepilot.analyzers.risk_score import FindingRisk, QualityGateConfig, evaluate_quality_gates
 from codepilot.domain.analysis import (
     AnalysisFinding,
     AnalysisNotFoundError,
@@ -21,7 +22,9 @@ from codepilot.domain.analysis import (
     AnalysisStatus,
     AnalysisSummary,
     InvalidAnalysisTransitionError,
+    fingerprint_finding,
 )
+from codepilot.domain.insights import calculate_repository_risk, select_hotspots
 from codepilot.repositories.analysis import AnalysisRepository
 from codepilot.services.repository_ingestion import (
     RepositoryCleanupError,
@@ -115,12 +118,14 @@ class AnalysisService:
         analyzer: Analyzer,
         queue: AnalysisQueue,
         lease_seconds: float = 900.0,
+        quality_gate_config: QualityGateConfig | None = None,
     ) -> None:
         self._repository = repository
         self._ingestion = ingestion
         self._analyzer = analyzer
         self._queue = queue
         self._lease_seconds = lease_seconds
+        self._quality_gate_config = quality_gate_config or QualityGateConfig()
 
     async def request_analysis(
         self, repository_url: str, workspace_id: str = "default"
@@ -236,8 +241,37 @@ class AnalysisService:
                 await self._repository.persist_findings(
                     analysis_id, result.findings, lease_token=lease_token
                 )
+                await self._repository.persist_file_insights(
+                    analysis_id, result.file_insights, lease_token=lease_token
+                )
                 stored_findings = await self._repository.get_findings(analysis_id)
-                summary = _build_summary(result, stored_findings, time.perf_counter() - started)
+                baseline = await self._repository.find_latest_completed(
+                    record.repository_url,
+                    record.workspace_id,
+                    before=record.created_at,
+                    exclude_analysis_id=analysis_id,
+                )
+                baseline_findings = (
+                    await self._repository.get_findings(baseline.analysis_id)
+                    if baseline is not None
+                    else ()
+                )
+                summary = _build_summary(
+                    result,
+                    stored_findings,
+                    time.perf_counter() - started,
+                    quality_gate_config=self._quality_gate_config,
+                    baseline_analysis_id=baseline.analysis_id if baseline else None,
+                    baseline_findings=baseline_findings,
+                    baseline_hotspot_paths=(
+                        tuple(
+                            item.path
+                            for item in select_hotspots(baseline.summary.file_insights)
+                        )
+                        if baseline and baseline.summary
+                        else ()
+                    ),
+                )
                 await self._repository.complete(
                     analysis_id,
                     result,
@@ -379,16 +413,48 @@ def _build_summary(
     result: AnalysisResult,
     findings: Sequence[AnalysisFinding],
     duration_seconds: float,
+    *,
+    quality_gate_config: QualityGateConfig,
+    baseline_analysis_id: UUID | None = None,
+    baseline_findings: Sequence[AnalysisFinding] = (),
+    baseline_hotspot_paths: Sequence[str] = (),
 ) -> AnalysisSummary:
     counts: dict[str, int] = {}
     for finding in findings:
         counts[finding.severity] = counts.get(finding.severity, 0) + 1
+    risk = calculate_repository_risk(result.file_insights) if result.file_insights else None
+    hotspots = select_hotspots(result.file_insights)
+    baseline_fingerprints = {fingerprint_finding(finding) for finding in baseline_findings}
+    current_hotspot_paths = {item.path for item in hotspots}
+    new_hotspot_count = len(current_hotspot_paths - set(baseline_hotspot_paths))
+    gate = (
+        evaluate_quality_gates(
+            tuple(
+                FindingRisk(
+                    finding.path,
+                    finding.severity,
+                    is_new=fingerprint_finding(finding) not in baseline_fingerprints,
+                )
+                for finding in findings
+            ),
+            risk_score=risk.score if risk else 0.0,
+            hotspot_count=len(hotspots),
+            config=quality_gate_config,
+            new_hotspot_count=new_hotspot_count,
+        )
+        if result.file_insights
+        else None
+    )
     return AnalysisSummary(
         analyzed_file_count=result.analyzed_file_count,
         source_lines=result.source_lines,
         finding_count_by_severity=counts,
         duration_seconds=duration_seconds,
         analyzer_outcomes=result.analyzer_outcomes,
+        risk_assessment=risk,
+        quality_gate=gate,
+        baseline_analysis_id=baseline_analysis_id,
+        file_insights=result.file_insights,
     )
 
 

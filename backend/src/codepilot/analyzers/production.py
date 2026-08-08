@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import asyncio
 from pathlib import Path
 
+from codepilot.analyzers.dependency_graph import DependencyGraphBuilder
 from codepilot.analyzers.framework import (
     Analyzer,
     AnalyzerContext,
@@ -15,9 +17,11 @@ from codepilot.analyzers.generic import (
     LargeSourceFileAnalyzer,
     LongLineAnalyzer,
 )
+from codepilot.analyzers.git_history import GitHistoryError, GitHistoryService
 from codepilot.analyzers.multilanguage_adapters import EslintAnalyzer
 from codepilot.analyzers.python_adapters import BanditAnalyzer, RadonAnalyzer, RuffAnalyzer
 from codepilot.domain.analysis import AnalysisFinding, AnalysisResult, AnalyzerOutcome
+from codepilot.domain.insights import build_file_insights
 from codepilot.services.repository_ingestion import RepositorySnapshot
 
 _LANGUAGE_MAP = {"Python": "python", "JavaScript": "javascript", "TypeScript": "typescript"}
@@ -28,6 +32,8 @@ class ProductionRepositoryAnalyzer:
 
     def __init__(self, *, tool_timeout_seconds: float = 60.0) -> None:
         self._tool_timeout_seconds = tool_timeout_seconds
+        self._history = GitHistoryService()
+        self._graph = DependencyGraphBuilder()
 
     def _registry(self, languages: set[str]) -> AnalyzerRegistry:
         registry = AnalyzerRegistry()
@@ -108,7 +114,7 @@ class ProductionRepositoryAnalyzer:
                         metadata.name.startswith("generic."),
                     )
                 )
-        findings = tuple(
+        findings = [
             AnalysisFinding(
                 path=Path(f.path).as_posix(),
                 rule_id=f.rule_id,
@@ -123,7 +129,77 @@ class ProductionRepositoryAnalyzer:
                 remediation=f.remediation,
             )
             for f in run.findings
+        ]
+        graph_coupling: dict[str, tuple[int, int]] = {}
+        history: dict[str, dict[str, float]] = {}
+        try:
+            graph = await asyncio.to_thread(self._graph.build, snapshot.repository_path)
+            graph_coupling = {
+                node: (graph.in_degree.get(node, 0), graph.out_degree.get(node, 0))
+                for node in set(graph.in_degree) | set(graph.out_degree)
+            }
+            findings.extend(
+                AnalysisFinding(
+                    path=finding.path,
+                    rule_id=finding.rule_id,
+                    severity=finding.severity,
+                    message=finding.description,
+                    start_line=finding.start_line,
+                    end_line=finding.end_line,
+                    analyzer=finding.analyzer,
+                    category=finding.category,
+                    title=finding.title,
+                    evidence=finding.evidence,
+                    remediation=finding.remediation,
+                )
+                for finding in graph.findings
+            )
+        except (OSError, ValueError) as error:
+            outcomes.append(
+                AnalyzerOutcome(
+                    "dependency.graph",
+                    "dependency.graph",
+                    None,
+                    "failed",
+                    0.0,
+                    str(error),
+                    None,
+                    True,
+                )
+            )
+        try:
+            metrics = await asyncio.to_thread(
+                self._history.collect,
+                snapshot.repository_path,
+                finding_density_by_path=_finding_density(findings),
+            )
+            history = {
+                path: {
+                    "recent_churn": metric.recent_churn,
+                    "ownership_concentration": metric.ownership_concentration,
+                }
+                for path, metric in metrics.by_path.items()
+            }
+        except GitHistoryError as error:
+            outcomes.append(
+                AnalyzerOutcome(
+                    "git.history", "git.history", None, "failed", 0.0, str(error), None, True
+                )
+            )
+        file_insights = build_file_insights(
+            findings=findings, history=history, complexity={}, coupling=graph_coupling
         )
         return AnalysisResult(
-            run.metrics.files_analyzed, run.metrics.source_lines, findings, tuple(outcomes), True
+            run.metrics.files_analyzed,
+            run.metrics.source_lines,
+            tuple(findings),
+            tuple(outcomes),
+            True,
+            file_insights,
         )
+
+def _finding_density(findings: list[AnalysisFinding]) -> dict[str, float]:
+    counts: dict[str, float] = {}
+    for finding in findings:
+        counts[finding.path] = counts.get(finding.path, 0.0) + 1.0
+    return counts

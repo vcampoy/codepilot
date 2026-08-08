@@ -5,12 +5,18 @@ from __future__ import annotations
 from typing import cast
 from uuid import UUID
 
-from fastapi import APIRouter, Request, status
+from fastapi import APIRouter, Query, Request, status
 from pydantic import BaseModel, Field
 
+from codepilot.analyzers.risk_score import (
+    QualityGateObserved,
+    QualityGateThresholds,
+    RiskAssessment,
+)
 from codepilot.core.auth import authenticate
 from codepilot.core.errors import ApplicationError
-from codepilot.domain.analysis import AnalysisNotFoundError, AnalysisRecord
+from codepilot.domain.analysis import AnalysisFinding, AnalysisNotFoundError, AnalysisRecord
+from codepilot.domain.insights import FileInsight, select_hotspots
 from codepilot.llm.contracts import EnrichmentResult, EnrichmentTask, LlmError
 from codepilot.services.analysis import AnalysisEnqueueError, AnalysisService
 from codepilot.services.llm_enrichment import (
@@ -52,6 +58,28 @@ class AnalysisSummaryResponse(BaseModel):
     summary: dict[str, object] | None
 
 
+class RiskAssessmentResponse(BaseModel):
+    score: float
+    category: str
+    version: str
+    components: dict[str, float]
+    weights: dict[str, float]
+
+
+class QualityGateFailureResponse(BaseModel):
+    code: str
+    detail: str
+
+
+class QualityGateResponse(BaseModel):
+    passed: bool
+    configured: bool
+    status: str
+    failures: list[QualityGateFailureResponse]
+    thresholds: dict[str, int | float | None]
+    observed: dict[str, int | float | None]
+
+
 class AnalyzerAvailabilityResponse(BaseModel):
     """Availability of supported external analyzers on this worker image."""
 
@@ -72,6 +100,24 @@ class AnalysisFindingResponse(BaseModel):
     title: str | None
     evidence: str | None
     remediation: str | None
+
+
+class FileInsightResponse(BaseModel):
+    path: str
+    hotspot_score: float
+    risk: RiskAssessmentResponse | None
+    metrics: dict[str, float]
+
+
+class FileDetailResponse(FileInsightResponse):
+    findings: list[AnalysisFindingResponse]
+
+
+class AnalysisFilesResponse(BaseModel):
+    items: list[FileInsightResponse]
+    total: int
+    limit: int
+    offset: int
 
 
 @router.post("", status_code=status.HTTP_202_ACCEPTED, response_model=AnalysisAcceptedResponse)
@@ -163,32 +209,113 @@ async def analysis_status(analysis_id: UUID, request: Request) -> AnalysisStatus
 async def analysis_summary(analysis_id: UUID, request: Request) -> AnalysisSummaryResponse:
     record = await _get_record(request, analysis_id)
     summary = record.summary
+    summary_payload: dict[str, object] | None = None
+    if summary is not None:
+        summary_payload = {
+            "analyzed_file_count": summary.analyzed_file_count,
+            "source_lines": summary.source_lines,
+            "finding_count_by_severity": summary.finding_count_by_severity,
+            "duration_seconds": summary.duration_seconds,
+            "analyzer_outcomes": [
+                {
+                    "analyzer": item.analyzer,
+                    "tool": item.tool,
+                    "version": item.version,
+                    "status": item.status,
+                    "duration_seconds": item.duration_seconds,
+                    "message": item.message,
+                    "language": item.language,
+                    "generic": item.generic,
+                }
+                for item in summary.analyzer_outcomes
+            ],
+        }
+        if summary.risk_assessment is not None:
+            summary_payload["risk_assessment"] = _risk_response(
+                summary.risk_assessment
+            ).model_dump()
+        if summary.quality_gate is not None:
+            summary_payload["quality_gate"] = {
+                "passed": summary.quality_gate.passed,
+                "configured": summary.quality_gate.configured,
+                "status": summary.quality_gate.status,
+                "failures": [
+                    {"code": failure.code, "detail": failure.detail}
+                    for failure in summary.quality_gate.failures
+                ],
+                "thresholds": _quality_gate_thresholds_response(summary.quality_gate.thresholds),
+                "observed": _quality_gate_observed_response(summary.quality_gate.observed),
+            }
+        if summary.baseline_analysis_id is not None:
+            summary_payload["baseline_analysis_id"] = str(summary.baseline_analysis_id)
+        if summary.file_insights:
+            summary_payload["hotspot_count"] = len(select_hotspots(summary.file_insights))
     return AnalysisSummaryResponse(
         analysis_id=record.analysis_id,
         status=record.status.value,
-        summary=(
-            {
-                "analyzed_file_count": summary.analyzed_file_count,
-                "source_lines": summary.source_lines,
-                "finding_count_by_severity": summary.finding_count_by_severity,
-                "duration_seconds": summary.duration_seconds,
-                "analyzer_outcomes": [
-                    {
-                        "analyzer": item.analyzer,
-                        "tool": item.tool,
-                        "version": item.version,
-                        "status": item.status,
-                        "duration_seconds": item.duration_seconds,
-                        "message": item.message,
-                        "language": item.language,
-                        "generic": item.generic,
-                    }
-                    for item in summary.analyzer_outcomes
-                ],
-            }
-            if summary is not None
-            else None
-        ),
+        summary=summary_payload,
+    )
+
+
+@router.get(
+    "/{analysis_id}/hotspots", response_model=list[FileInsightResponse]
+)
+async def analysis_hotspots(
+    analysis_id: UUID,
+    request: Request,
+    limit: int = Query(default=20, ge=1, le=100),
+) -> list[FileInsightResponse]:
+    record = await _get_record(request, analysis_id)
+    if record.summary is None:
+        return []
+    return [
+        _file_insight_response(item)
+        for item in select_hotspots(record.summary.file_insights, limit=limit)
+    ]
+
+
+@router.get("/{analysis_id}/files", response_model=AnalysisFilesResponse)
+async def analysis_files(
+    analysis_id: UUID,
+    request: Request,
+    limit: int = Query(default=100, ge=1, le=100),
+    offset: int = Query(default=0, ge=0),
+) -> AnalysisFilesResponse:
+    record = await _get_record(request, analysis_id)
+    insights = tuple(
+        sorted(
+            record.summary.file_insights if record.summary else (),
+            key=lambda item: (-item.hotspot_score, item.path),
+        )
+    )
+    return AnalysisFilesResponse(
+        items=[_file_insight_response(item) for item in insights[offset : offset + limit]],
+        total=len(insights),
+        limit=limit,
+        offset=offset,
+    )
+
+
+@router.get("/{analysis_id}/files/detail", response_model=FileDetailResponse)
+async def analysis_file_detail(
+    analysis_id: UUID, request: Request, path: str = Query(min_length=1, max_length=2048)
+) -> FileDetailResponse:
+    record = await _get_record(request, analysis_id)
+    if record.summary is None:
+        raise ApplicationError(
+            "analysis_not_ready",
+            "Deterministic analysis evidence is not available yet.",
+            status_code=409,
+        )
+    normalized = path.replace("\\", "/")
+    insight = next((item for item in record.summary.file_insights if item.path == normalized), None)
+    if insight is None:
+        raise ApplicationError("file_not_found", "File insight was not found.", status_code=404)
+    findings = await _service(request).get_findings(analysis_id, authenticate(request).workspace_id)
+    response = _file_insight_response(insight)
+    return FileDetailResponse(
+        **response.model_dump(),
+        findings=[_finding_response(finding) for finding in findings if finding.path == normalized],
     )
 
 
@@ -231,3 +358,60 @@ async def _get_record(request: Request, analysis_id: UUID) -> AnalysisRecord:
         raise ApplicationError(
             "analysis_not_found", "Analysis was not found.", status_code=404
         ) from error
+
+
+def _risk_response(risk: object) -> RiskAssessmentResponse:
+    assessment = cast(RiskAssessment, risk)
+    return RiskAssessmentResponse(
+        score=assessment.score,
+        category=assessment.category,
+        version=assessment.version,
+        components=assessment.components,
+        weights=assessment.weights,
+    )
+
+
+def _file_insight_response(insight: FileInsight) -> FileInsightResponse:
+    return FileInsightResponse(
+        path=insight.path,
+        hotspot_score=insight.hotspot_score,
+        risk=(_risk_response(insight.risk) if insight.risk else None),
+        metrics=insight.metrics,
+    )
+
+
+def _quality_gate_thresholds_response(
+    thresholds: QualityGateThresholds,
+) -> dict[str, int | float | None]:
+    return {
+        "max_new_critical_findings": thresholds.max_new_critical_findings,
+        "max_risk_score": thresholds.max_risk_score,
+        "max_new_hotspots": thresholds.max_new_hotspots,
+    }
+
+
+def _quality_gate_observed_response(
+    observed: QualityGateObserved,
+) -> dict[str, int | float | None]:
+    return {
+        "new_critical_findings": observed.new_critical_findings,
+        "risk_score": observed.risk_score,
+        "new_hotspots": observed.new_hotspots,
+    }
+
+
+def _finding_response(finding: object) -> AnalysisFindingResponse:
+    item = cast(AnalysisFinding, finding)
+    return AnalysisFindingResponse(
+        path=item.path,
+        rule_id=item.rule_id,
+        analyzer=item.analyzer,
+        severity=item.severity,
+        message=item.message,
+        start_line=item.start_line,
+        end_line=item.end_line,
+        category=item.category,
+        title=item.title,
+        evidence=item.evidence,
+        remediation=item.remediation,
+    )

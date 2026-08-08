@@ -54,9 +54,14 @@ def test_authenticated_workspaces_cannot_read_each_others_analyses() -> None:
             f"/api/v1/analyses/{analysis_id}",
             headers={"X-API-Key": "test-api-key", "X-Workspace-ID": "workspace-b"},
         )
+        forbidden_files = client.get(
+            f"/api/v1/analyses/{analysis_id}/files",
+            headers={"X-API-Key": "test-api-key", "X-Workspace-ID": "workspace-b"},
+        )
 
     assert missing.status_code == 401
     assert forbidden.status_code == 404
+    assert forbidden_files.status_code == 404
 
 
 def test_health_readiness_liveness_and_security_headers() -> None:

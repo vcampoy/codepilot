@@ -7,8 +7,13 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from enum import StrEnum
 from hashlib import sha256
-from typing import Final
+from typing import TYPE_CHECKING, Final
 from uuid import UUID
+
+from codepilot.analyzers.risk_score import QualityGateResult, RiskAssessment
+
+if TYPE_CHECKING:
+    from codepilot.domain.insights import FileInsight
 
 
 class AnalysisStatus(StrEnum):
@@ -54,6 +59,7 @@ class AnalysisResult:
     findings: tuple[AnalysisFinding, ...]
     analyzer_outcomes: tuple[AnalyzerOutcome, ...] = ()
     enforce_execution: bool = False
+    file_insights: tuple[FileInsight, ...] = ()
 
     @property
     def execution_succeeded(self) -> bool:
@@ -101,6 +107,10 @@ class AnalysisSummary:
     finding_count_by_severity: dict[str, int]
     duration_seconds: float
     analyzer_outcomes: tuple[AnalyzerOutcome, ...] = ()
+    risk_assessment: RiskAssessment | None = None
+    quality_gate: QualityGateResult | None = None
+    baseline_analysis_id: UUID | None = None
+    file_insights: tuple[FileInsight, ...] = ()
 
 
 @dataclass(slots=True)

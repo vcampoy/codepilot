@@ -22,8 +22,21 @@ export interface AnalysisSummaryResponse {
     finding_count_by_severity: Record<string, number>
     duration_seconds: number
     analyzer_outcomes?: AnalyzerOutcome[]
+    risk_assessment?: RiskAssessment | null
+    quality_gate?: QualityGate | null
+    baseline_analysis_id?: string | null
+    hotspot_count?: number
   } | null
 }
+
+export interface RiskAssessment { score: number; category: string; version: string; components: Record<string, number>; weights: Record<string, number> }
+export interface QualityGateFailure { code: string; detail: string }
+export interface QualityGateThresholds { max_new_critical_findings: number | null; max_risk_score: number | null; max_new_hotspots: number | null }
+export interface QualityGateObserved { new_critical_findings: number; risk_score: number | null; new_hotspots: number }
+export interface QualityGate { passed: boolean; configured: boolean; status: 'passed' | 'failed' | 'not_configured'; failures: QualityGateFailure[]; thresholds: QualityGateThresholds; observed: QualityGateObserved }
+export interface FileInsight { path: string; hotspot_score: number; risk: RiskAssessment | null; metrics: Record<string, number> }
+export interface FileDetail extends FileInsight { findings: AnalysisFinding[] }
+export interface AnalysisFilesResponse { items: FileInsight[]; total: number; limit: number; offset: number }
 
 export interface AnalyzerOutcome { analyzer: string; tool: string; version: string | null; status: string; duration_seconds: number; message: string | null; language?: string | null; generic?: boolean }
 export interface AnalysisFinding {
@@ -98,8 +111,29 @@ export function getAnalyzerAvailability(): Promise<AnalyzerAvailability[]> {
   return request<AnalyzerAvailability[]>('/api/v1/analyses/analyzers/availability')
 }
 
-export function getAnalysisFindings(id: string): Promise<AnalysisFinding[]> {
-  return request<AnalysisFinding[]>(`/api/v1/analyses/${encodeURIComponent(id)}/findings`)
+export function getAnalysisFindings(id: string, init?: RequestInit): Promise<AnalysisFinding[]> {
+  return request<AnalysisFinding[]>(`/api/v1/analyses/${encodeURIComponent(id)}/findings`, init)
+}
+
+export function getAnalysisHotspots(id: string, limit = 20, init?: RequestInit): Promise<FileInsight[]> {
+  return request<FileInsight[]>(
+    `/api/v1/analyses/${encodeURIComponent(id)}/hotspots?limit=${limit}`,
+    init,
+  )
+}
+
+export function getAnalysisFiles(id: string, limit = 100, offset = 0, init?: RequestInit): Promise<AnalysisFilesResponse> {
+  return request<AnalysisFilesResponse>(
+    `/api/v1/analyses/${encodeURIComponent(id)}/files?limit=${limit}&offset=${offset}`,
+    init,
+  )
+}
+
+export function getAnalysisFileDetail(id: string, path: string, init?: RequestInit): Promise<FileDetail> {
+  return request<FileDetail>(
+    `/api/v1/analyses/${encodeURIComponent(id)}/files/detail?path=${encodeURIComponent(path)}`,
+    init,
+  )
 }
 
 export function requestEnrichment(id: string, task: EnrichmentTask, path?: string): Promise<EnrichmentResponse> {
