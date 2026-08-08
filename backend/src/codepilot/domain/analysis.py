@@ -39,6 +39,10 @@ class AnalysisFinding:
     start_line: int
     end_line: int
     analyzer: str = "unknown"
+    category: str = "other"
+    title: str | None = None
+    evidence: str | None = None
+    remediation: str | None = None
 
 
 @dataclass(frozen=True, slots=True)

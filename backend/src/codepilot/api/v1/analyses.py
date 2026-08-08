@@ -68,6 +68,10 @@ class AnalysisFindingResponse(BaseModel):
     message: str
     start_line: int
     end_line: int
+    category: str
+    title: str | None
+    evidence: str | None
+    remediation: str | None
 
 
 @router.post("", status_code=status.HTTP_202_ACCEPTED, response_model=AnalysisAcceptedResponse)
@@ -206,6 +210,10 @@ async def analysis_findings(analysis_id: UUID, request: Request) -> list[Analysi
             message=finding.message,
             start_line=finding.start_line,
             end_line=finding.end_line,
+            category=finding.category,
+            title=finding.title,
+            evidence=finding.evidence,
+            remediation=finding.remediation,
         )
         for finding in findings
     ]

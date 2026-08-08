@@ -58,6 +58,10 @@ class FindingsAnalyzer:
                     start_line=4,
                     end_line=4,
                     analyzer="python.ruff",
+                    category="quality",
+                    title="Avoid this pattern",
+                    evidence="The rule matched this expression.",
+                    remediation="Refactor the expression.",
                 ),
             ),
             analyzer_outcomes=(
@@ -182,6 +186,10 @@ def test_findings_endpoint_returns_persisted_findings_and_summary_outcomes() -> 
             "message": "Avoid this pattern.",
             "start_line": 4,
             "end_line": 4,
+            "category": "quality",
+            "title": "Avoid this pattern",
+            "evidence": "The rule matched this expression.",
+            "remediation": "Refactor the expression.",
         }
     ]
     assert summary.json()["summary"]["analyzer_outcomes"][0]["analyzer"] == "generic.file-metrics"

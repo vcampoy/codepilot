@@ -13,6 +13,13 @@ import {
   type EnrichmentResponse,
 } from './api'
 import { createFindingsMarkdownExport, downloadMarkdownFile } from './findingsExport'
+import {
+  FINDING_SEVERITIES,
+  categoryLabel,
+  displaySeverity,
+  severityCounts,
+  sortFindings,
+} from './findingsPresentation'
 
 type View = 'repositories' | 'analyses' | 'overview' | 'findings' | 'hotspots' | 'files' | 'quality'
 
@@ -202,7 +209,52 @@ function FindingsView({ findings, status, summary, error, repositoryUrl, analysi
     })
     downloadMarkdownFile(file)
   }
-  return <section className="page-grid"><div className="panel table-panel"><div className="panel-title"><span>Findings ({findings.length})</span><button className="secondary-button" onClick={exportFindings} type="button">Export findings (.md)</button></div>{findings.map((finding) => <div className="history-row" key={`${finding.analyzer}-${finding.path}-${finding.start_line}`}><span>{finding.severity}</span><code>{finding.path}:{finding.start_line}</code><span>{finding.message}</span><small>{finding.analyzer}</small></div>)}</div></section>
+  const counts = severityCounts(findings)
+  const orderedFindings = sortFindings(findings)
+  return (
+    <section className="page-grid">
+      <div className="finding-summary" aria-label="Finding severity summary">
+        {FINDING_SEVERITIES.map((severity) => (
+          <div className={`finding-summary-card severity-${severity}`} key={severity}>
+            <span>{severity}</span>
+            <strong>{counts[severity]}</strong>
+          </div>
+        ))}
+      </div>
+      <div className="panel table-panel">
+        <div className="panel-title">
+          <span>Findings ({findings.length})</span>
+          <button className="secondary-button" onClick={exportFindings} type="button">Export findings (.md)</button>
+        </div>
+        <div className="findings-table-wrap">
+          <table className="findings-table">
+            <caption className="sr-only">Repository findings sorted by severity</caption>
+            <thead>
+              <tr><th scope="col">Description</th><th scope="col">Severity</th><th scope="col">Type</th></tr>
+            </thead>
+            <tbody>
+              {orderedFindings.map((finding) => {
+                const severity = displaySeverity(finding.severity)
+                return (
+                  <tr key={`${finding.analyzer}-${finding.path}-${finding.start_line}-${finding.rule_id}`}>
+                    <td data-label="Description">
+                      <strong>{finding.message}</strong>
+                      <small className="finding-meta">
+                        <code>{finding.path}:{finding.start_line}{finding.end_line !== finding.start_line ? `-${finding.end_line}` : ''}</code>
+                        <span>{finding.rule_id} · {finding.analyzer}</span>
+                      </small>
+                    </td>
+                    <td data-label="Severity"><span className={`severity-badge severity-${severity}`}>{severity}</span></td>
+                    <td data-label="Type"><span className="category-badge">{categoryLabel(finding.category)}</span></td>
+                  </tr>
+                )
+              })}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </section>
+  )
 }
 
 function OverviewView({ analysisId, status, summary }: { analysisId: string | null; status: AnalysisStatus | null; summary: AnalysisSummaryResponse['summary'] }) {

@@ -1,4 +1,5 @@
 import type { AnalysisFinding } from './api'
+import { categoryLabel, displaySeverity } from './findingsPresentation'
 
 const MARKDOWN_MIME_TYPE = 'text/markdown;charset=utf-8'
 
@@ -34,6 +35,7 @@ export function createFindingsMarkdownExport(input: FindingsMarkdownExportInput)
   const repositoryName = repositoryNameFromUrl(input.repositoryUrl)
   const timestamp = formatLocalTimestamp(input.exportedAt)
   const rows = input.findings.map(formatFindingRow).join('\n')
+  const details = input.findings.map(formatFindingDetails).join('\n\n')
   const content = [
     `# Findings for ${repositoryName}`,
     '',
@@ -42,9 +44,10 @@ export function createFindingsMarkdownExport(input: FindingsMarkdownExportInput)
     `- Exported at: ${input.exportedAt.toISOString()}`,
     `- Total findings: ${input.findings.length}`,
     '',
-    '| Severity | Rule | Location | Analyzer | Message |',
-    '| --- | --- | --- | --- | --- |',
+    '| Description | Severity | Rule | Location | Analyzer | Type |',
+    '| --- | --- | --- | --- | --- | --- |',
     rows,
+    ...(input.findings.length > 0 ? ['', '## Finding details', '', details] : []),
     '',
   ].join('\n')
 
@@ -78,7 +81,73 @@ function formatFindingRow(finding: AnalysisFinding): string {
   const location = finding.start_line === finding.end_line
     ? `${finding.path}:${finding.start_line}`
     : `${finding.path}:${finding.start_line}-${finding.end_line}`
-  return `| ${escapeMarkdownCell(finding.severity)} | ${escapeMarkdownCell(finding.rule_id)} | ${escapeMarkdownCell(location)} | ${escapeMarkdownCell(finding.analyzer)} | ${escapeMarkdownCell(finding.message)} |`
+  return `| ${escapeMarkdownCell(finding.message)} | ${displaySeverity(finding.severity)} | ${escapeMarkdownCell(finding.rule_id)} | ${escapeMarkdownCell(location)} | ${escapeMarkdownCell(finding.analyzer)} | ${escapeMarkdownCell(categoryLabel(finding.category))} |`
+}
+
+function formatFindingDetails(finding: AnalysisFinding, index: number): string {
+  const title = finding.title?.trim() || finding.rule_id
+  return [
+    `### ${index + 1}. [${displaySeverity(finding.severity)}] ${escapeMarkdownInline(title)}`,
+    '',
+    `- Type: ${escapeMarkdownInline(categoryLabel(finding.category))}`,
+    `- Rule: ${escapeMarkdownInline(finding.rule_id)}`,
+    `- Location: ${escapeMarkdownInline(formatLocation(finding))}`,
+    `- Analyzer: ${escapeMarkdownInline(finding.analyzer)}`,
+    '',
+    '**Description**',
+    '',
+    formatMarkdownBlock(finding.message),
+    '',
+    '**Evidence**',
+    '',
+    formatOptionalMarkdownBlock(finding.evidence),
+    '',
+    '**Remediation**',
+    '',
+    formatOptionalMarkdownBlock(finding.remediation),
+  ].join('\n')
+}
+
+function formatLocation(finding: AnalysisFinding): string {
+  return finding.start_line === finding.end_line
+    ? `${finding.path}:${finding.start_line}`
+    : `${finding.path}:${finding.start_line}-${finding.end_line}`
+}
+
+function formatOptionalMarkdownBlock(value: string | null | undefined): string {
+  return value?.trim() ? formatMarkdownBlock(value) : '_Not provided by analyzer._'
+}
+
+function formatMarkdownBlock(value: string): string {
+  return value
+    .replaceAll('&', '&amp;')
+    .replaceAll('<', '&lt;')
+    .replaceAll('>', '&gt;')
+    .replaceAll('\\', '\\\\')
+    .replaceAll('`', '\\`')
+    .replaceAll('*', '\\*')
+    .replaceAll('_', '\\_')
+    .replaceAll('[', '\\[')
+    .replaceAll(']', '\\]')
+    .replaceAll('\r\n', '\n')
+    .replaceAll('\r', '\n')
+    .split('\n')
+    .map((line) => `> ${line}`)
+    .join('\n')
+}
+
+function escapeMarkdownInline(value: string): string {
+  return value
+    .replaceAll('&', '&amp;')
+    .replaceAll('<', '&lt;')
+    .replaceAll('>', '&gt;')
+    .replaceAll('\\', '\\\\')
+    .replaceAll('`', '\\`')
+    .replaceAll('[', '\\[')
+    .replaceAll(']', '\\]')
+    .replaceAll('\r\n', '<br>')
+    .replaceAll('\n', '<br>')
+    .replaceAll('\r', '<br>')
 }
 
 function escapeMarkdownCell(value: string): string {

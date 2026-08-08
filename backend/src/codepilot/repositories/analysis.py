@@ -18,6 +18,7 @@ from sqlalchemy import (
     MetaData,
     String,
     Table,
+    Text,
     UniqueConstraint,
     Uuid,
     and_,
@@ -424,6 +425,10 @@ _FINDINGS = Table(
     Column("start_line", Integer, nullable=False),
     Column("end_line", Integer, nullable=False),
     Column("analyzer", String(256), nullable=False, default="unknown"),
+    Column("category", String(64), nullable=False, default="other"),
+    Column("title", String(512)),
+    Column("evidence", Text),
+    Column("remediation", Text),
     UniqueConstraint("analysis_id", "fingerprint", name="uq_analysis_finding_fingerprint"),
 )
 
@@ -594,7 +599,7 @@ class PostgresAnalysisRepository:
         lease_token: UUID | None = None,
         now: datetime | None = None,
     ) -> int:
-        values = [
+        values: list[dict[str, object]] = [
             {
                 "analysis_id": analysis_id,
                 "fingerprint": fingerprint_finding(finding),
@@ -605,6 +610,10 @@ class PostgresAnalysisRepository:
                 "start_line": finding.start_line,
                 "end_line": finding.end_line,
                 "analyzer": finding.analyzer,
+                "category": finding.category,
+                "title": finding.title,
+                "evidence": finding.evidence,
+                "remediation": finding.remediation,
             }
             for finding in findings
         ]
@@ -850,6 +859,10 @@ def _finding_from_row(row: Any) -> AnalysisFinding:
         start_line=int(row["start_line"]),
         end_line=int(row["end_line"]),
         analyzer=cast(str, row.get("analyzer", "unknown")),
+        category=cast(str, row.get("category", "other")),
+        title=cast(str | None, row.get("title")),
+        evidence=cast(str | None, row.get("evidence")),
+        remediation=cast(str | None, row.get("remediation")),
     )
 
 

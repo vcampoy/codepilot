@@ -117,6 +117,10 @@ class ProductionRepositoryAnalyzer:
                 start_line=f.start_line,
                 end_line=f.end_line,
                 analyzer=f.analyzer,
+                category=f.category,
+                title=f.title,
+                evidence=f.evidence,
+                remediation=f.remediation,
             )
             for f in run.findings
         )

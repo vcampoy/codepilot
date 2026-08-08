@@ -26,7 +26,19 @@ export interface AnalysisSummaryResponse {
 }
 
 export interface AnalyzerOutcome { analyzer: string; tool: string; version: string | null; status: string; duration_seconds: number; message: string | null; language?: string | null; generic?: boolean }
-export interface AnalysisFinding { path: string; rule_id: string; analyzer: string; severity: string; message: string; start_line: number; end_line: number }
+export interface AnalysisFinding {
+  path: string
+  rule_id: string
+  analyzer: string
+  severity: string
+  message: string
+  start_line: number
+  end_line: number
+  category?: string
+  title?: string | null
+  evidence?: string | null
+  remediation?: string | null
+}
 
 export interface AnalyzerAvailability {
   analyzer: string

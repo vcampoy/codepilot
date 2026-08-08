@@ -13,6 +13,10 @@ const FINDINGS: readonly AnalysisFinding[] = Object.freeze([
     analyzer: 'python.ruff',
     severity: 'warning',
     message: 'Line contains | and <unsafe>\nsecond line',
+    category: 'style',
+    title: 'Long line rule',
+    evidence: 'const value = `unsafe`\nnext line',
+    remediation: 'Split the expression and use <safe> input.',
     start_line: 12,
     end_line: 14,
   },
@@ -22,6 +26,7 @@ const FINDINGS: readonly AnalysisFinding[] = Object.freeze([
     analyzer: 'javascript.eslint',
     severity: 'error',
     message: 'Avoid any',
+    category: 'security',
     start_line: 3,
     end_line: 3,
   },
@@ -53,8 +58,14 @@ describe('findings Markdown export', () => {
     expect(exported.content).toContain('- Repository: https://github.com/vcampoy/codepilot')
     expect(exported.content).toContain('- Analysis: analysis-123')
     expect(exported.content).toContain('- Total findings: 2')
-    expect(exported.content).toContain('warning | E501 | src/main.py:12-14 | python.ruff | Line contains \\| and &lt;unsafe&gt;<br>second line')
-    expect(exported.content).toContain('error | no-any | src/app.ts:3 | javascript.eslint | Avoid any')
+    expect(exported.content).toContain('Line contains \\| and &lt;unsafe&gt;<br>second line | medium | E501 | src/main.py:12-14 | python.ruff | Style')
+    expect(exported.content).toContain('Avoid any | high | no-any | src/app.ts:3 | javascript.eslint | Security')
+    expect(exported.content).toContain('## Finding details')
+    expect(exported.content).toContain('### 1. [medium] Long line rule')
+    expect(exported.content).toContain('> const value = \\`unsafe\\`')
+    expect(exported.content).toContain('> Split the expression and use &lt;safe&gt; input.')
+    expect(exported.content).toContain('### 2. [high] no-any')
+    expect(exported.content).toContain('_Not provided by analyzer._')
   })
 
   it('downloads the Markdown and releases browser resources', () => {
