@@ -118,7 +118,6 @@ def create_stale_recovery_task(
             if error.connection_invalidated:
                 raise self.retry(exc=error, countdown=5, max_retries=None) from error
             raise
-        return None
 
     return run
 

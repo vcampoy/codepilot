@@ -177,8 +177,14 @@ export function getQualityPolicy(projectId: string): Promise<QualityPolicy> {
   return request<QualityPolicy>(`/api/v1/projects/${encodeURIComponent(projectId)}/quality-policy`)
 }
 
-export function saveQualityPolicy(projectId: string, policy: Omit<QualityPolicy, 'configured'>): Promise<QualityPolicy> {
-  return request<QualityPolicy>(`/api/v1/projects/${encodeURIComponent(projectId)}/quality-policy`, { method: 'PUT', body: JSON.stringify(policy) })
+export function saveQualityPolicy(
+  projectId: string,
+  policy: Omit<QualityPolicy, 'configured'>,
+): Promise<QualityPolicy> {
+  return request<QualityPolicy>(
+    `/api/v1/projects/${encodeURIComponent(projectId)}/quality-policy`,
+    { method: 'PUT', body: JSON.stringify(policy) },
+  )
 }
 
 export function importQualityProfile(projectId: string, xml: string): Promise<{ language: string; profile_name: string | null; mapped: number; unsupported: string[]; invalid: string[] }> {

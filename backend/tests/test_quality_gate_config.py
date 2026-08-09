@@ -34,7 +34,12 @@ def test_policy_is_immutable_and_rules_add_gate_failure() -> None:
 
 
 def test_sonar_profile_import_maps_and_reports_unsupported() -> None:
-    xml = b"<profile><name>py</name><language>py</language><rules><rule><repositoryKey>python</repositoryKey><key>S123</key><priority>MAJOR</priority><status>READY</status></rule><rule><key>x:ZZZ</key></rule></rules></profile>"
+    xml = (
+        b"<profile><name>py</name><language>py</language><rules>"
+        b"<rule><repositoryKey>python</repositoryKey><key>S123</key>"
+        b"<priority>MAJOR</priority><status>READY</status></rule>"
+        b"<rule><key>x:ZZZ</key></rule></rules></profile>"
+    )
     report = parse_sonar_profile_xml(xml, max_bytes=10000)
     assert report.mapped == 1
     assert report.unsupported == ("x:ZZZ",)

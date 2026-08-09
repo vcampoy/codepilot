@@ -520,9 +520,17 @@ function FindingsView({ findings, status, summary, error, repositoryUrl, analysi
           </button>
         </TableFilterDialog>
         {filteredFindings.length === 0 ? (
-          <EmptyState title="No findings match the selected filters." description="Clear one or more filters to show findings again." compact />
+          <EmptyState
+            title="No findings match the selected filters."
+            description="Clear one or more filters to show findings again."
+            compact
+          />
         ) : visibleColumns.length === 0 ? (
-          <EmptyState title="No columns visible" description="Use the Columns menu above to show at least one finding column." compact />
+          <EmptyState
+            title="No columns visible"
+            description="Use the Columns menu above to show at least one finding column."
+            compact
+          />
         ) : (
           <div className="findings-table-wrap">
             <table className="findings-table">
@@ -769,7 +777,16 @@ function HotspotsView({ hotspots, status, error, repositoryUrl, analysisId, onSe
           return [hotspot.path, null] as const
         }
       }))
-      const file = createHotspotsMarkdownExport({ repositoryUrl, analysisId, hotspots: exportRows, totalHotspotsLoaded: hotspots.length, filters, sort, details: Object.fromEntries(detailEntries), exportedAt: new Date() })
+      const file = createHotspotsMarkdownExport({
+        repositoryUrl,
+        analysisId,
+        hotspots: exportRows,
+        totalHotspotsLoaded: hotspots.length,
+        filters,
+        sort,
+        details: Object.fromEntries(detailEntries),
+        exportedAt: new Date(),
+      })
       downloadMarkdownFile(file)
     } finally {
       setExportBusy(false)
@@ -786,7 +803,12 @@ function HotspotsView({ hotspots, status, error, repositoryUrl, analysisId, onSe
           <span>Hotspots ({filteredHotspots.length === hotspots.length ? hotspots.length : `${filteredHotspots.length} of ${hotspots.length}`})</span>
           <div className="table-actions">
             <button className="secondary-button" onClick={openFilterDialog} type="button">Filter</button>
-            <button className="secondary-button" disabled={orderedHotspots.length === 0 || exportBusy} onClick={() => void exportHotspots()} type="button">
+            <button
+              className="secondary-button"
+              disabled={orderedHotspots.length === 0 || exportBusy}
+              onClick={() => void exportHotspots()}
+              type="button"
+            >
               {exportBusy ? 'Exporting...' : 'Export hotspots (.md)'}
             </button>
           </div>
@@ -817,7 +839,11 @@ function HotspotsView({ hotspots, status, error, repositoryUrl, analysisId, onSe
           </button>
         </TableFilterDialog>
         {filteredHotspots.length === 0 ? (
-          <EmptyState title="No hotspots match the selected filters." description="Clear the risk filter to show hotspots again." compact />
+          <EmptyState
+            title="No hotspots match the selected filters."
+            description="Clear the risk filter to show hotspots again."
+            compact
+          />
         ) : (
           <div className="findings-table-wrap">
             <table className="findings-table">
@@ -826,7 +852,11 @@ function HotspotsView({ hotspots, status, error, repositoryUrl, analysisId, onSe
                 <tr>
                   {HOTSPOT_COLUMNS.map(({ key, label }) => (
                     <th aria-sort={sort.column === key ? (sort.direction === 'asc' ? 'ascending' : 'descending') : 'none'} key={key} scope="col">
-                      <button className="table-sort-button" onClick={() => setSort((current) => toggleHotspotSort(current, key as HotspotColumnKey))} type="button">
+                      <button
+                        className="table-sort-button"
+                        onClick={() => setSort((current) => toggleHotspotSort(current, key as HotspotColumnKey))}
+                        type="button"
+                      >
                         {label}
                         {sort.column === key && <span aria-hidden="true" className="sort-indicator">{sort.direction === 'asc' ? 'asc' : 'desc'}</span>}
                       </button>
@@ -915,7 +945,14 @@ function FindingDetailCard({ finding, expanded, onToggle }: { finding: AnalysisF
 function FileDetailView({ detail, path, files, status, busy, error, catalogError, onSelectPath }: { detail: FileDetail | null; path: string | null; files: FileInsight[]; status: AnalysisStatus | null; busy: boolean; error: string | null; catalogError: string | null; onSelectPath: (path: string) => void }) {
   const [expandedFindingKey, setExpandedFindingKey] = useState<string | null>(null)
   useEffect(() => setExpandedFindingKey(null), [path])
-  if (status !== 'completed') return <EmptyState title="File detail pending" description="File-level evidence appears after deterministic analysis completes." />
+  if (status !== 'completed') {
+    return (
+      <EmptyState
+        title="File detail pending"
+        description="File-level evidence appears after deterministic analysis completes."
+      />
+    )
+  }
   if (catalogError && files.length === 0 && !path) return <EmptyState title="File catalog unavailable" description={catalogError} />
   if (!path && files.length === 0) return <EmptyState title="No file evidence" description="The completed analysis did not include file-level evidence." />
   if (busy) return <EmptyState title="Loading file detail" description={`Loading evidence for ${path}.`} />
@@ -1039,7 +1076,12 @@ function QualityGateView({
     if (!llmModel) return
     setLlmSaving(true)
     try {
-      const configuration = await saveLlmConfiguration({ enabled: llmEnabled, provider: llmProvider, model: llmModel, ...(llmKey ? { api_key: llmKey } : {}) })
+      const configuration = await saveLlmConfiguration({
+        enabled: llmEnabled,
+        provider: llmProvider,
+        model: llmModel,
+        ...(llmKey ? { api_key: llmKey } : {}),
+      })
       setLlm(configuration)
       setLlmModelOptions(getLlmModelOptions(configuration.provider, configuration.model))
       setLlmKey('')

@@ -35,8 +35,10 @@ _PUBLIC_TEST_URL: Final = "https://example.com/acme/repository.git"
 
 def _create_local_git_repository(path: Path) -> None:
     subprocess.run(["git", "init", "--initial-branch", "main", str(path)], check=True)
-    subprocess.run(
-        ["git", "-C", str(path), "config", "user.email", "tests@example.com"], check=True
+    # The executable and arguments are test-owned constants for this local fixture.
+    subprocess.run(  # nosec B607
+        ["git", "-C", str(path), "config", "user.email", "tests@example.com"],
+        check=True,
     )
     # The executable and arguments are test-owned constants for this local fixture.
     subprocess.run(  # nosec B607
@@ -91,7 +93,8 @@ class _LocalGitClient:
     async def resolve_commit_sha(
         self, repository_path: Path, _cancellation_event: asyncio.Event | None = None
     ) -> str:
-        completed = subprocess.run(
+        # The executable and arguments are test-owned constants for this local fixture.
+        completed = subprocess.run(  # nosec B607
             ["git", "-C", str(repository_path), "rev-parse", "HEAD"],
             check=True,
             capture_output=True,

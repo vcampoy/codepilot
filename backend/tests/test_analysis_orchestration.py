@@ -850,6 +850,7 @@ def test_periodic_recovery_task_reclaims_stale_work_and_closes_service() -> None
     result = task.apply(throw=True)
 
     assert result.successful()
+    assert result.result is None
     assert service.recovered == 1
     assert service.closed is True
 

@@ -219,7 +219,10 @@ describe('analysis history and quality KPI', () => {
       summary: {
         ...summary.summary,
         hotspot_count: 11,
-        quality_gate: { ...summary.summary.quality_gate, observed: { ...summary.summary.quality_gate.observed, new_hotspots: 0 } },
+        quality_gate: {
+          ...summary.summary.quality_gate,
+          observed: { ...summary.summary.quality_gate.observed, new_hotspots: 0 },
+        },
       },
     })
     render(<App />)
@@ -231,7 +234,12 @@ describe('analysis history and quality KPI', () => {
 
   it('selects multiple history rows and deletes only after the React confirmation', async () => {
     configureCompletedRun()
-    fixtures.getAnalysisHistory.mockResolvedValue({ items: [historyItem, { ...historyItem, analysis_id: 'analysis-2', repository_name: 'other' }], total: 2, limit: 20, offset: 0 })
+    fixtures.getAnalysisHistory.mockResolvedValue({
+      items: [historyItem, { ...historyItem, analysis_id: 'analysis-2', repository_name: 'other' }],
+      total: 2,
+      limit: 20,
+      offset: 0,
+    })
     fixtures.deleteAnalysis.mockResolvedValue(undefined)
     render(<App />)
     fireEvent.submit(screen.getByRole('button', { name: 'Analyze repository' }).closest('form')!, { preventDefault: () => undefined })

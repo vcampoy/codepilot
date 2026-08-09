@@ -16,6 +16,8 @@ const hotspot = (path: string, score: number, risk: string | null, metrics: Reco
   metrics,
 })
 
+const SORTED_MISSING_HOTSPOT_PATHS = ['known.ts', 'missing.ts'] as const
+
 describe('hotspots presentation', () => {
   it('filters by risk category and keeps input immutable', () => {
     const hotspots = [
@@ -45,15 +47,23 @@ describe('hotspots presentation', () => {
 
   it('sorts missing risk last and counts components', () => {
     const hotspots = [hotspot('missing.ts', 0.9, null, {}), hotspot('known.ts', 0.1, 'low', { x: 1 })] as const
-    expect(sortHotspots(hotspots, { column: 'risk', direction: 'asc' }).map((item) => item.path)).toEqual(['known.ts', 'missing.ts'])
-    expect(sortHotspots(hotspots, { column: 'risk', direction: 'desc' }).map((item) => item.path)).toEqual(['known.ts', 'missing.ts'])
+    expect(
+      sortHotspots(hotspots, { column: 'risk', direction: 'asc' }).map((item) => item.path),
+    ).toEqual(SORTED_MISSING_HOTSPOT_PATHS)
+    expect(
+      sortHotspots(hotspots, { column: 'risk', direction: 'desc' }).map((item) => item.path),
+    ).toEqual(SORTED_MISSING_HOTSPOT_PATHS)
     expect(hotspotComponentCount(hotspots[0])).toBe(0)
   })
 
   it('keeps hotspots without components last in both directions', () => {
     const hotspots = [hotspot('missing.ts', 0.9, 'high', {}), hotspot('known.ts', 0.1, 'low', { x: 1 })] as const
-    expect(sortHotspots(hotspots, { column: 'components', direction: 'asc' }).map((item) => item.path)).toEqual(['known.ts', 'missing.ts'])
-    expect(sortHotspots(hotspots, { column: 'components', direction: 'desc' }).map((item) => item.path)).toEqual(['known.ts', 'missing.ts'])
+    expect(
+      sortHotspots(hotspots, { column: 'components', direction: 'asc' }).map((item) => item.path),
+    ).toEqual(SORTED_MISSING_HOTSPOT_PATHS)
+    expect(
+      sortHotspots(hotspots, { column: 'components', direction: 'desc' }).map((item) => item.path),
+    ).toEqual(SORTED_MISSING_HOTSPOT_PATHS)
   })
 
   it('toggles active sort direction and starts ascending for a new column', () => {
