@@ -103,6 +103,38 @@ beforeEach(() => {
 afterEach(() => cleanup())
 
 describe('completed analysis result loading', () => {
+  it('filters findings by severity and type', async () => {
+    const findings = [
+      finding,
+      { ...finding, rule_id: 'PY002', severity: 'critical', message: 'Critical security issue.', category: 'security' },
+      { ...finding, rule_id: 'PY003', severity: 'info', message: 'Informational quality issue.', category: 'quality' },
+    ] as const
+    configureCompletedRun()
+    fixtures.getAnalysisFindings.mockResolvedValue(findings)
+    fixtures.getAnalysisHotspots.mockResolvedValue([insight])
+    fixtures.getAnalysisFiles.mockResolvedValue({ items: [insight], total: 1, limit: 100, offset: 0 })
+
+    render(<App />)
+    fireEvent.submit(screen.getByRole('button', { name: 'Analyze repository' }).closest('form')!, {
+      preventDefault: () => undefined,
+    })
+    fireEvent.click(await screen.findByRole('button', { name: 'Findings' }))
+    await waitFor(() => expect(screen.getByText('Findings (3)')).toBeInTheDocument())
+
+    fireEvent.click(screen.getByRole('checkbox', { name: 'Critical' }))
+    expect(screen.getByText('Critical security issue.')).toBeInTheDocument()
+    expect(screen.queryByText('Avoid this pattern.')).not.toBeInTheDocument()
+
+    fireEvent.click(screen.getByRole('checkbox', { name: 'Security' }))
+    expect(screen.getByText('Critical security issue.')).toBeInTheDocument()
+    expect(screen.queryByText('Informational quality issue.')).not.toBeInTheDocument()
+
+    fireEvent.click(screen.getByRole('checkbox', { name: 'Security' }))
+    fireEvent.click(screen.getByRole('checkbox', { name: 'Quality' }))
+    expect(screen.queryByText('Critical security issue.')).not.toBeInTheDocument()
+    expect(screen.getByText('No findings match the selected filters.')).toBeInTheDocument()
+  })
+
   it('keeps findings and hotspots after the polling status changes to completed', async () => {
     const findings = deferred<typeof finding[]>()
     const hotspots = deferred<typeof insight[]>()

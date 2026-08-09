@@ -3,6 +3,7 @@ import type { AnalysisFinding } from './api'
 import {
   categoryLabel,
   displaySeverity,
+  filterFindings,
   reconcileFindingSort,
   severityCounts,
   sortFindings,
@@ -22,6 +23,23 @@ const SORT_FIXTURE: readonly AnalysisFinding[] = [
 ]
 
 describe('findings presentation', () => {
+  it('filters by selected severities and types without mutating input', () => {
+    const findings = [
+      finding('critical', 'critical-style', 'Critical style', 'style'),
+      finding('warning', 'warning-security', 'Warning security', 'security'),
+      finding('info', 'info-style', 'Info style', 'style'),
+    ] as const
+
+    expect(filterFindings(findings, { severities: ['critical', 'low'], types: ['Style'] }).map((item) => item.rule_id))
+      .toEqual(['critical-style', 'info-style'])
+    expect(filterFindings(findings, { severities: ['high'], types: [] })).toEqual([])
+    expect(findings.map((item) => item.rule_id)).toEqual(['critical-style', 'warning-security', 'info-style'])
+  })
+
+  it('returns every finding when no filters are selected', () => {
+    const findings = [finding('critical', 'one'), finding('low', 'two')] as const
+    expect(filterFindings(findings, { severities: [], types: [] })).toEqual(findings)
+  })
   it.each([
     ['critical', 'critical'], ['high', 'high'], ['error', 'high'], ['medium', 'medium'],
     ['warning', 'medium'], ['low', 'low'], ['info', 'low'], ['note', 'low'], ['unexpected', 'medium'],

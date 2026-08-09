@@ -23,11 +23,13 @@ import {
   FINDING_SEVERITIES,
   categoryLabel,
   displaySeverity,
+  filterFindings,
   reconcileFindingSort,
   severityCounts,
   sortFindings,
   toggleFindingSort,
   type FindingColumnKey,
+  type FindingFilters,
   type FindingSort,
 } from './findingsPresentation'
 
@@ -280,6 +282,11 @@ function App() {
 function FindingsView({ findings, status, summary, error, repositoryUrl, analysisId, onSelectPath }: { findings: AnalysisFinding[]; status: AnalysisStatus | null; summary: AnalysisSummaryResponse['summary']; error: string | null; repositoryUrl: string | null; analysisId: string | null; onSelectPath: (path: string) => void }) {
   const [sort, setSort] = useState<FindingSort>({ column: 'severity', direction: 'desc' })
   const [visibleColumns, setVisibleColumns] = useState<FindingColumnKey[]>(() => FINDING_COLUMNS.map(({ key }) => key))
+  const [filters, setFilters] = useState<FindingFilters>({ severities: [], types: [] })
+  const availableTypes = useMemo(
+    () => [...new Set(findings.map((finding) => categoryLabel(finding.category)))].sort((left, right) => left.localeCompare(right)),
+    [findings],
+  )
 
   if (status === 'failed') {
     const noAnalyzerEvidence = error === 'No compatible analyzer could execute.'
@@ -301,9 +308,27 @@ function FindingsView({ findings, status, summary, error, repositoryUrl, analysi
     })
     downloadMarkdownFile(file)
   }
-  const counts = severityCounts(findings)
-  const orderedFindings = sortFindings(findings, sort)
+  const filteredFindings = filterFindings(findings, filters)
+  const counts = severityCounts(filteredFindings)
+  const orderedFindings = sortFindings(filteredFindings, sort)
   const toggleSort = (column: FindingColumnKey) => setSort((current) => toggleFindingSort(current, column))
+  const toggleSeverity = (severity: (typeof FINDING_SEVERITIES)[number]) => {
+    setFilters((current) => ({
+      ...current,
+      severities: current.severities.includes(severity)
+        ? current.severities.filter((item) => item !== severity)
+        : [...current.severities, severity],
+    }))
+  }
+  const toggleType = (type: string) => {
+    setFilters((current) => ({
+      ...current,
+      types: current.types.includes(type)
+        ? current.types.filter((item) => item !== type)
+        : [...current.types, type],
+    }))
+  }
+  const clearFilters = () => setFilters({ severities: [], types: [] })
   const toggleColumn = (column: FindingColumnKey) => {
     const next = visibleColumns.includes(column) ? visibleColumns.filter((key) => key !== column) : [...visibleColumns, column]
     setVisibleColumns(next)
@@ -323,6 +348,31 @@ function FindingsView({ findings, status, summary, error, repositoryUrl, analysi
         <div className="panel-title">
           <span>Findings ({findings.length})</span>
           <div className="table-actions">
+            <fieldset className="finding-filter-group">
+              <legend>Severity</legend>
+              {FINDING_SEVERITIES.map((severity) => (
+                <label key={severity}>
+                  <input
+                    checked={filters.severities.includes(severity)}
+                    onChange={() => toggleSeverity(severity)}
+                    type="checkbox"
+                  />
+                  {severity.charAt(0).toUpperCase() + severity.slice(1)}
+                </label>
+              ))}
+            </fieldset>
+            <fieldset className="finding-filter-group">
+              <legend>Type</legend>
+              {availableTypes.map((type) => (
+                <label key={type}>
+                  <input checked={filters.types.includes(type)} onChange={() => toggleType(type)} type="checkbox" />
+                  {type}
+                </label>
+              ))}
+            </fieldset>
+            {(filters.severities.length > 0 || filters.types.length > 0) && (
+              <button className="secondary-button" onClick={clearFilters} type="button">Clear filters</button>
+            )}
             <details className="column-picker">
               <summary>Columns</summary>
               <fieldset>
@@ -338,7 +388,9 @@ function FindingsView({ findings, status, summary, error, repositoryUrl, analysi
             <button className="secondary-button" onClick={exportFindings} type="button">Export findings (.md)</button>
           </div>
         </div>
-        {visibleColumns.length === 0 ? (
+        {filteredFindings.length === 0 ? (
+          <EmptyState title="No findings match the selected filters." description="Clear one or more filters to show findings again." compact />
+        ) : visibleColumns.length === 0 ? (
           <EmptyState title="No columns visible" description="Use the Columns menu above to show at least one finding column." compact />
         ) : (
           <div className="findings-table-wrap">

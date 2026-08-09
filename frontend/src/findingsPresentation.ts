@@ -6,6 +6,10 @@ export type FindingSeverity = typeof FINDING_SEVERITIES[number]
 export type FindingColumnKey = 'description' | 'severity' | 'type'
 export type SortDirection = 'asc' | 'desc'
 export type FindingSort = { column: FindingColumnKey; direction: SortDirection }
+export type FindingFilters = {
+  severities: readonly FindingSeverity[]
+  types: readonly string[]
+}
 
 export const FINDING_COLUMNS: readonly { key: FindingColumnKey; label: string }[] = [
   { key: 'description', label: 'Description' },
@@ -48,6 +52,19 @@ export function categoryLabel(category: string | undefined): string {
     .split(/[-_\s]+/)
     .map((word) => word.charAt(0).toUpperCase() + word.slice(1))
     .join(' ')
+}
+
+export function filterFindings(
+  findings: readonly AnalysisFinding[],
+  filters: FindingFilters,
+): AnalysisFinding[] {
+  const severityFilter = new Set(filters.severities)
+  const typeFilter = new Set(filters.types.map((type) => type.trim().toLowerCase()))
+  return findings.filter((finding) => {
+    const severityMatches = severityFilter.size === 0 || severityFilter.has(displaySeverity(finding.severity))
+    const typeMatches = typeFilter.size === 0 || typeFilter.has(categoryLabel(finding.category).toLowerCase())
+    return severityMatches && typeMatches
+  })
 }
 
 export function sortFindings(
