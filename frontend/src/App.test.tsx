@@ -26,11 +26,17 @@ const fixtures = vi.hoisted(() => ({
   getAnalysisFiles: vi.fn(),
   getAnalysisFileDetail: vi.fn(),
   requestEnrichment: vi.fn(),
+  downloadMarkdownFile: vi.fn(),
 }))
 
 vi.mock('./api', () => ({
   ...fixtures,
   apiDocsUrl: 'http://localhost:8000/docs',
+}))
+
+vi.mock('./findingsExport', async () => ({
+  ...(await vi.importActual<typeof import('./findingsExport')>('./findingsExport')),
+  downloadMarkdownFile: fixtures.downloadMarkdownFile,
 }))
 
 import App from './App'
@@ -189,6 +195,50 @@ describe('completed analysis result loading', () => {
     })
     fireEvent.click(await screen.findByRole('button', { name: 'Findings' }))
     await waitFor(() => expect(screen.getByText('Findings (1)')).toBeInTheDocument())
+  })
+
+  it('filters, sorts, and exports hotspots using the visible rows', async () => {
+    configureCompletedRun()
+    const secondInsight = { ...insight, path: 'src/other.py', hotspot_score: 0.4, risk: { ...insight.risk!, score: 0.4, category: 'medium' }, metrics: { complexity: 0.4, coupling: 0.3 } }
+    fixtures.getAnalysisFindings.mockResolvedValue([finding])
+    fixtures.getAnalysisHotspots.mockResolvedValue([insight, secondInsight])
+    fixtures.getAnalysisFiles.mockResolvedValue({ items: [insight, secondInsight], total: 2, limit: 100, offset: 0 })
+    fixtures.getAnalysisFileDetail.mockImplementation(async (_id: string, path: string) => ({ ...(path === insight.path ? insight : secondInsight), findings: path === insight.path ? [finding] : [] }))
+
+    render(<App />)
+    fireEvent.submit(screen.getByRole('button', { name: 'Analyze repository' }).closest('form')!, { preventDefault: () => undefined })
+    fireEvent.click(await screen.findByRole('button', { name: 'Hotspots' }))
+    await waitFor(() => expect(screen.getByText('Hotspots (2)')).toBeInTheDocument())
+
+    expect(screen.getByRole('button', { name: 'Export hotspots (.md)' })).toBeEnabled()
+    fireEvent.click(screen.getByRole('checkbox', { name: 'High' }))
+    expect(screen.getByText('Hotspots (1 of 2)')).toBeInTheDocument()
+    expect(screen.queryByText('src/other.py')).not.toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: /Risk/ }))
+    expect(screen.getByRole('columnheader', { name: /Risk/ })).toHaveAttribute('aria-sort', 'ascending')
+  })
+
+  it('exports visible hotspots, fetches related details, and tolerates one detail failure', async () => {
+    configureCompletedRun()
+    const secondInsight = { ...insight, path: 'src/other.py', hotspot_score: 0.4, risk: { ...insight.risk!, score: 0.4, category: 'medium' }, metrics: { complexity: 0.4 } }
+    fixtures.getAnalysisFindings.mockResolvedValue([finding])
+    fixtures.getAnalysisHotspots.mockResolvedValue([insight, secondInsight])
+    fixtures.getAnalysisFiles.mockResolvedValue({ items: [insight, secondInsight], total: 2, limit: 100, offset: 0 })
+    fixtures.getAnalysisFileDetail.mockImplementation(async (_id: string, path: string) => {
+      if (path === secondInsight.path) throw new Error('partial detail failure')
+      return { ...insight, findings: [finding] }
+    })
+
+    render(<App />)
+    fireEvent.change(screen.getByLabelText('Repository URL'), { target: { value: 'https://github.com/acme/demo' } })
+    fireEvent.submit(screen.getByRole('button', { name: 'Analyze repository' }).closest('form')!, { preventDefault: () => undefined })
+    fireEvent.click(await screen.findByRole('button', { name: 'Hotspots' }))
+    await waitFor(() => expect(screen.getByText('Hotspots (2)')).toBeInTheDocument())
+    fireEvent.click(screen.getByRole('button', { name: 'Export hotspots (.md)' }))
+    await waitFor(() => expect(fixtures.downloadMarkdownFile).toHaveBeenCalledOnce())
+    expect(fixtures.getAnalysisFileDetail).toHaveBeenCalledWith('analysis-1', 'src/main.py')
+    expect(fixtures.getAnalysisFileDetail).toHaveBeenCalledWith('analysis-1', 'src/other.py')
+    expect(fixtures.downloadMarkdownFile.mock.calls[0][0].content).toContain('Related findings: _Unavailable')
   })
 
   it('loads the first file in direct File detail view and shows quality evidence', async () => {

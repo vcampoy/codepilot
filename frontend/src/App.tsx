@@ -18,6 +18,7 @@ import {
   type EnrichmentResponse,
 } from './api'
 import { createFindingsMarkdownExport, downloadMarkdownFile } from './findingsExport'
+import { createHotspotsMarkdownExport, MAX_HOTSPOTS_EXPORT } from './hotspotsExport'
 import {
   FINDING_COLUMNS,
   FINDING_SEVERITIES,
@@ -32,6 +33,18 @@ import {
   type FindingFilters,
   type FindingSort,
 } from './findingsPresentation'
+import {
+  HOTSPOT_COLUMNS,
+  HOTSPOT_RISKS,
+  filterHotspots,
+  formatHotspotComponents,
+  hotspotRisk,
+  sortHotspots,
+  toggleHotspotSort,
+  type HotspotColumnKey,
+  type HotspotFilters,
+  type HotspotSort,
+} from './hotspotsPresentation'
 
 type View = 'repositories' | 'analyses' | 'overview' | 'findings' | 'hotspots' | 'files' | 'quality'
 
@@ -271,7 +284,7 @@ function App() {
         {activeView === 'analyses' && <HistoryView analysisId={analysisId} status={status} />}
         {activeView === 'overview' && <OverviewView analysisId={analysisId} status={status} summary={summary} />}
         {activeView === 'findings' && <FindingsView findings={findings} status={status} summary={summary} error={error || findingsError} repositoryUrl={analyzedRepositoryUrl} analysisId={analysisId} onSelectPath={(path) => { setSelectedFilePath(path); navigate('files') }} />}
-        {activeView === 'hotspots' && <HotspotsView hotspots={hotspots} status={status} error={hotspotsError} onSelectPath={(path) => { setSelectedFilePath(path); navigate('files') }} />}
+        {activeView === 'hotspots' && <HotspotsView hotspots={hotspots} status={status} error={hotspotsError} repositoryUrl={analyzedRepositoryUrl} analysisId={analysisId} onSelectPath={(path) => { setSelectedFilePath(path); navigate('files') }} />}
         {activeView === 'files' && <FileDetailView detail={fileDetail} path={selectedFilePath} files={fileInsights} status={status} busy={fileDetailBusy || resultsBusy} error={fileDetailError} catalogError={filesError} onSelectPath={setSelectedFilePath} />}
         {activeView === 'quality' && <QualityGateView summary={summary} />}
       </main>
@@ -475,11 +488,43 @@ function HistoryView({ analysisId, status }: { analysisId: string | null; status
   return <section className="page-grid"><div className="panel table-panel"><div className="panel-title"><span>Analysis history</span><span className="muted">Latest first</span></div>{analysisId ? <div className="history-row"><code>{analysisId}</code><span className={`status-badge status-${status}`}>{status}</span><button type="button" onClick={() => { window.location.hash = 'overview' }}>Open overview</button></div> : <EmptyState title="No analyses" description="Submit a repository to create your first analysis run." compact />}</div></section>
 }
 
-function HotspotsView({ hotspots, status, error, onSelectPath }: { hotspots: FileInsight[]; status: AnalysisStatus | null; error: string | null; onSelectPath: (path: string) => void }) {
+function HotspotsView({ hotspots, status, error, repositoryUrl, analysisId, onSelectPath }: { hotspots: FileInsight[]; status: AnalysisStatus | null; error: string | null; repositoryUrl: string | null; analysisId: string | null; onSelectPath: (path: string) => void }) {
+  const [sort, setSort] = useState<HotspotSort>({ column: 'hotspot_score', direction: 'desc' })
+  const [filters, setFilters] = useState<HotspotFilters>({ risks: [] })
+  const [exportBusy, setExportBusy] = useState(false)
+  const filteredHotspots = useMemo(() => filterHotspots(hotspots, filters), [filters, hotspots])
+  const orderedHotspots = useMemo(() => sortHotspots(filteredHotspots, sort), [filteredHotspots, sort])
+  const toggleRisk = (risk: (typeof HOTSPOT_RISKS)[number]) => {
+    setFilters((current) => ({
+      risks: current.risks.includes(risk) ? current.risks.filter((item) => item !== risk) : [...current.risks, risk],
+    }))
+  }
+  const clearFilters = () => setFilters({ risks: [] })
+  const exportHotspots = async () => {
+    if (!repositoryUrl || !analysisId || orderedHotspots.length === 0) return
+    setExportBusy(true)
+    try {
+      // API returns at most 20 rows; retain an explicit cap so export detail fan-out stays bounded.
+      const exportRows = orderedHotspots.slice(0, MAX_HOTSPOTS_EXPORT)
+      const detailEntries = await Promise.all(exportRows.map(async (hotspot) => {
+        try {
+          const detail = await getAnalysisFileDetail(analysisId, hotspot.path)
+          return [hotspot.path, detail] as const
+        } catch {
+          return [hotspot.path, null] as const
+        }
+      }))
+      const file = createHotspotsMarkdownExport({ repositoryUrl, analysisId, hotspots: exportRows, totalHotspotsLoaded: hotspots.length, filters, sort, details: Object.fromEntries(detailEntries), exportedAt: new Date() })
+      downloadMarkdownFile(file)
+    } finally {
+      setExportBusy(false)
+    }
+  }
   if (status !== 'completed') return <EmptyState title="Hotspots pending" description="Hotspots appear after deterministic analysis completes." />
   if (error && hotspots.length === 0) return <EmptyState title="Hotspots unavailable" description={error} />
   if (hotspots.length === 0) return <EmptyState title="No hotspots" description="No file reached the configured hotspot threshold." />
-  return <section className="page-grid"><div className="panel table-panel"><div className="panel-title"><span>Hotspots ({hotspots.length})</span><span className="muted">Highest evidence-backed scores</span></div><div className="findings-table-wrap"><table className="findings-table"><thead><tr><th scope="col">File</th><th scope="col">Hotspot score</th><th scope="col">Risk</th><th scope="col">Components</th></tr></thead><tbody>{hotspots.map((hotspot) => <tr key={hotspot.path}><td><button className="path-link" onClick={() => onSelectPath(hotspot.path)} type="button"><code>{hotspot.path}</code></button></td><td>{hotspot.hotspot_score.toFixed(2)}</td><td>{hotspot.risk ? `${hotspot.risk.score.toFixed(2)} (${hotspot.risk.category})` : 'Unavailable'}</td><td>{Object.entries(hotspot.metrics).map(([name, value]) => `${name}: ${value.toFixed(2)}`).join(' · ') || 'Unavailable'}</td></tr>)}</tbody></table></div></div></section>
+  const sortLabel = HOTSPOT_COLUMNS.find(({ key }) => key === sort.column)?.label ?? sort.column
+  return <section className="page-grid"><div className="panel table-panel"><div className="panel-title"><span>Hotspots ({filteredHotspots.length === hotspots.length ? hotspots.length : `${filteredHotspots.length} of ${hotspots.length}`})</span><div className="table-actions"><fieldset className="finding-filter-group"><legend>Risk</legend>{HOTSPOT_RISKS.map((risk) => <label key={risk}><input checked={filters.risks.includes(risk)} onChange={() => toggleRisk(risk)} type="checkbox" />{risk.charAt(0).toUpperCase() + risk.slice(1)}</label>)}</fieldset>{filters.risks.length > 0 && <button className="secondary-button" onClick={clearFilters} type="button">Clear filters</button>}<button className="secondary-button" disabled={orderedHotspots.length === 0 || exportBusy} onClick={() => void exportHotspots()} type="button">{exportBusy ? 'Exporting...' : 'Export hotspots (.md)'}</button></div></div>{filteredHotspots.length === 0 ? <EmptyState title="No hotspots match the selected filters." description="Clear the risk filter to show hotspots again." compact /> : <div className="findings-table-wrap"><table className="findings-table"><caption className="sr-only">Hotspots sorted by {sortLabel}</caption><thead><tr>{HOTSPOT_COLUMNS.map(({ key, label }) => <th aria-sort={sort.column === key ? (sort.direction === 'asc' ? 'ascending' : 'descending') : 'none'} key={key} scope="col"><button className="table-sort-button" onClick={() => setSort((current) => toggleHotspotSort(current, key as HotspotColumnKey))} type="button">{label}{sort.column === key && <span aria-hidden="true" className="sort-indicator">{sort.direction === 'asc' ? '↑' : '↓'}</span>}</button></th>)}</tr></thead><tbody>{orderedHotspots.map((hotspot) => <tr key={hotspot.path}><td><button className="path-link" onClick={() => onSelectPath(hotspot.path)} type="button"><code>{hotspot.path}</code></button></td><td>{hotspot.hotspot_score.toFixed(2)}</td><td>{hotspot.risk ? `${hotspot.risk.score.toFixed(2)} (${hotspotRisk(hotspot)})` : 'Unavailable'}</td><td>{formatHotspotComponents(hotspot)}</td></tr>)}</tbody></table></div>}</div></section>
 }
 
 function FileDetailView({ detail, path, files, status, busy, error, catalogError, onSelectPath }: { detail: FileDetail | null; path: string | null; files: FileInsight[]; status: AnalysisStatus | null; busy: boolean; error: string | null; catalogError: string | null; onSelectPath: (path: string) => void }) {
