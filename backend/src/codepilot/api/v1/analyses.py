@@ -24,7 +24,11 @@ from codepilot.domain.analysis import (
 )
 from codepilot.domain.insights import FileInsight, select_hotspots
 from codepilot.llm.contracts import EnrichmentResult, EnrichmentTask, LlmError
-from codepilot.services.analysis import AnalysisEnqueueError, AnalysisService
+from codepilot.services.analysis import (
+    AnalysisDeletionConflictError,
+    AnalysisEnqueueError,
+    AnalysisService,
+)
 from codepilot.services.llm_enrichment import (
     AnalysisNotReadyForEnrichmentError,
     LlmEnrichmentService,
@@ -63,6 +67,26 @@ class AnalysisSummaryResponse(BaseModel):
     analysis_id: UUID
     status: str
     summary: dict[str, object] | None
+
+
+class AnalysisHistoryItemResponse(BaseModel):
+    analysis_id: UUID
+    project_id: UUID | None
+    repository_name: str
+    repository_url: str
+    created_at: str
+    risk_score: float | None
+    risk_category: str | None
+    finding_count: int
+    analyzed_file_count: int
+    duration_seconds: float
+
+
+class AnalysisHistoryResponse(BaseModel):
+    items: list[AnalysisHistoryItemResponse]
+    total: int
+    limit: int
+    offset: int
 
 
 class RiskAssessmentResponse(BaseModel):
@@ -175,6 +199,53 @@ async def analyzer_availability() -> list[AnalyzerAvailabilityResponse]:
         )
     )
     return availability
+
+
+@router.get("/history", response_model=AnalysisHistoryResponse)
+async def analysis_history(
+    request: Request,
+    limit: int = Query(default=20, ge=1, le=100),
+    offset: int = Query(default=0, ge=0),
+) -> AnalysisHistoryResponse:
+    identity = authenticate(request)
+    items, total = await _service(request).list_history(
+        identity.workspace_id, limit=limit, offset=offset
+    )
+    return AnalysisHistoryResponse(
+        items=[
+            AnalysisHistoryItemResponse(
+                analysis_id=item.analysis_id,
+                project_id=item.project_id,
+                repository_name=item.repository_name,
+                repository_url=item.repository_url,
+                created_at=item.created_at.isoformat(),
+                risk_score=item.risk_score,
+                risk_category=item.risk_category,
+                finding_count=item.finding_count,
+                analyzed_file_count=item.analyzed_file_count,
+                duration_seconds=item.duration_seconds,
+            )
+            for item in items
+        ],
+        total=total,
+        limit=limit,
+        offset=offset,
+    )
+
+
+@router.delete("/{analysis_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_analysis(analysis_id: UUID, request: Request) -> None:
+    identity = authenticate(request)
+    try:
+        await _service(request).delete_analysis(analysis_id, identity.workspace_id)
+    except AnalysisNotFoundError as error:
+        raise ApplicationError(
+            "analysis_not_found", "Analysis was not found.", status_code=404
+        ) from error
+    except AnalysisDeletionConflictError as error:
+        raise ApplicationError(
+            "analysis_not_ready", "Only completed analyses can be deleted.", status_code=409
+        ) from error
 
 
 @router.post(

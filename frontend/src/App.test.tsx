@@ -27,6 +27,8 @@ const fixtures = vi.hoisted(() => ({
   getAnalysisFileDetail: vi.fn(),
   getProjects: vi.fn().mockResolvedValue({ items: [] }),
   getProjectAnalyses: vi.fn(),
+  getAnalysisHistory: vi.fn().mockResolvedValue({ items: [], total: 0, limit: 20, offset: 0 }),
+  deleteAnalysis: vi.fn(),
   getQualityPolicy: vi.fn(),
   saveQualityPolicy: vi.fn(),
   importQualityProfile: vi.fn(),
@@ -103,6 +105,19 @@ const insight = {
 
 const alternateInsight = { ...insight, path: 'src/other.py' } as const
 
+const historyItem = {
+  analysis_id: 'analysis-1',
+  project_id: 'project-1',
+  repository_name: 'demo',
+  repository_url: 'https://github.com/acme/demo',
+  created_at: '2026-08-09T12:00:00Z',
+  risk_score: 0.8,
+  risk_category: 'high',
+  finding_count: 1,
+  analyzed_file_count: 2,
+  duration_seconds: 1.2,
+} as const
+
 const filterFindings = [
   finding,
   { ...finding, rule_id: 'PY002', severity: 'critical', message: 'Critical security issue.', category: 'security' },
@@ -160,10 +175,58 @@ beforeEach(() => {
   window.location.hash = ''
   Object.values(fixtures).forEach((mock) => mock.mockReset())
   fixtures.getProjects.mockResolvedValue({ items: [] })
+  fixtures.getAnalysisHistory.mockResolvedValue({ items: [], total: 0, limit: 20, offset: 0 })
   fixtures.getLlmConfiguration.mockResolvedValue({ enabled: false, provider: 'openai', model: 'gpt-4o-mini', api_key_configured: false })
 })
 
 afterEach(() => cleanup())
+
+describe('analysis history and quality KPI', () => {
+  it('renders persisted KPI columns, opens a row, and deletes only after confirmation', async () => {
+    configureCompletedRun()
+    fixtures.getAnalysisHistory.mockResolvedValue({ items: [historyItem], total: 1, limit: 20, offset: 0 })
+    fixtures.deleteAnalysis.mockResolvedValue(undefined)
+    const confirm = vi.spyOn(window, 'confirm').mockReturnValue(false)
+
+    render(<App />)
+    fireEvent.submit(screen.getByRole('button', { name: 'Analyze repository' }).closest('form')!, { preventDefault: () => undefined })
+    fireEvent.click(await screen.findByRole('button', { name: 'Analysis history' }))
+    expect(await screen.findByRole('columnheader', { name: 'Repository' })).toBeInTheDocument()
+    expect(screen.getByRole('rowheader', { name: /demo/ })).toBeInTheDocument()
+    expect(screen.getByRole('cell', { name: '0.80 (high)' })).toBeInTheDocument()
+    expect(screen.getByRole('cell', { name: '1' })).toBeInTheDocument()
+    expect(screen.getByText(/2026/)).toBeInTheDocument()
+
+    fireEvent.click(screen.getByRole('link', { name: /demo/ }))
+    expect(window.location.hash).toBe('#overview')
+    fireEvent.click(await screen.findByRole('button', { name: 'Analysis history' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Delete analysis demo' }))
+    expect(confirm).toHaveBeenCalledOnce()
+    expect(fixtures.deleteAnalysis).not.toHaveBeenCalled()
+
+    confirm.mockReturnValue(true)
+    fireEvent.click(screen.getByRole('button', { name: 'Delete analysis demo' }))
+    await waitFor(() => expect(fixtures.deleteAnalysis).toHaveBeenCalledWith('analysis-1'))
+    confirm.mockRestore()
+  })
+
+  it('shows total hotspots in Quality Gate while preserving new-hotspot evidence', async () => {
+    configureCompletedRun()
+    fixtures.getAnalysisSummary.mockResolvedValue({
+      ...summary,
+      summary: {
+        ...summary.summary,
+        hotspot_count: 11,
+        quality_gate: { ...summary.summary.quality_gate, observed: { ...summary.summary.quality_gate.observed, new_hotspots: 0 } },
+      },
+    })
+    render(<App />)
+    fireEvent.submit(screen.getByRole('button', { name: 'Analyze repository' }).closest('form')!, { preventDefault: () => undefined })
+    fireEvent.click(await screen.findByRole('button', { name: 'Quality gate' }))
+    expect(screen.getAllByText('Hotspots').length).toBeGreaterThanOrEqual(1)
+    expect(screen.getByText('11')).toBeInTheDocument()
+  })
+})
 
 describe('completed analysis result loading', () => {
   it('filters findings by severity and type', async () => {

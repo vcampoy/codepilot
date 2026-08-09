@@ -13,4 +13,17 @@ describe('project history API contract', () => {
       'http://localhost:8000/api/v1/projects/project-1/analyses?limit=20&offset=0',
     ])
   })
+
+  it('requests the flat history endpoint and deletes an encoded analysis', async () => {
+    vi.resetModules()
+    const fetchMock = vi.fn().mockResolvedValue({ ok: true, json: async () => ({ items: [], total: 0, limit: 20, offset: 0 }) })
+    vi.stubGlobal('fetch', fetchMock)
+    const api = await import('./api')
+    await api.getAnalysisHistory()
+    await api.deleteAnalysis('analysis/1')
+    expect(fetchMock.mock.calls.map(([url, init]) => [url, init?.method])).toEqual([
+      ['http://localhost:8000/api/v1/analyses/history?limit=20&offset=0', undefined],
+      ['http://localhost:8000/api/v1/analyses/analysis%2F1', 'DELETE'],
+    ])
+  })
 })

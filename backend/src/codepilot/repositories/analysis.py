@@ -43,6 +43,7 @@ from codepilot.analyzers.risk_score import (
 )
 from codepilot.domain.analysis import (
     AnalysisFinding,
+    AnalysisHistoryRecord,
     AnalysisNotFoundError,
     AnalysisRecord,
     AnalysisResult,
@@ -78,6 +79,12 @@ class AnalysisRepository(Protocol):
     async def list_project_analyses(
         self, project_id: UUID, workspace_id: str, *, limit: int, offset: int
     ) -> tuple[tuple[AnalysisRecord, ...], int]: ...
+
+    async def list_history(
+        self, workspace_id: str, *, limit: int, offset: int
+    ) -> tuple[tuple[AnalysisHistoryRecord, ...], int]: ...
+
+    async def delete_analysis(self, analysis_id: UUID, workspace_id: str) -> None: ...
 
     async def get(
         self, analysis_id: UUID, workspace_id: str | None = None
@@ -270,6 +277,38 @@ class InMemoryAnalysisRepository:
                 reverse=True,
             )
             return tuple(_copy_record(r) for r in records[offset : offset + limit]), len(records)
+
+    async def list_history(
+        self, workspace_id: str, *, limit: int, offset: int
+    ) -> tuple[tuple[AnalysisHistoryRecord, ...], int]:
+        async with self._lock:
+            records = [
+                record
+                for record in self._records.values()
+                if record.workspace_id == workspace_id
+                and record.status is AnalysisStatus.COMPLETED
+                and record.summary is not None
+            ]
+            records.sort(key=lambda item: item.created_at, reverse=True)
+            items = tuple(
+                _history_from_record(
+                    record,
+                    self._projects.get(record.project_id) if record.project_id is not None else None,
+                )
+                for record in records[offset : offset + limit]
+            )
+            return items, len(records)
+
+    async def delete_analysis(self, analysis_id: UUID, workspace_id: str) -> None:
+        async with self._lock:
+            record = self._records.get(analysis_id)
+            if record is None or record.workspace_id != workspace_id:
+                raise AnalysisNotFoundError
+            if record.status is not AnalysisStatus.COMPLETED:
+                raise ValueError("only completed analyses can be deleted")
+            del self._records[analysis_id]
+            self._findings.pop(analysis_id, None)
+            self._file_insights.pop(analysis_id, None)
 
     async def create(self, repository_url: str, workspace_id: str = "default") -> AnalysisRecord:
         async with self._lock:
@@ -858,6 +897,65 @@ class PostgresAnalysisRepository:
                 ).scalar_one()
             )
         return tuple(_record_from_row(row) for row in rows), count
+
+    async def list_history(
+        self, workspace_id: str, *, limit: int, offset: int
+    ) -> tuple[tuple[AnalysisHistoryRecord, ...], int]:
+        # Summary JSON is already the aggregate source of truth. Decode each row in Python
+        # so PostgreSQL JSON operator differences cannot alter the public contract.
+        async with self._engine.connect() as connection:
+            count = int(
+                (
+                    await connection.execute(
+                        select(func.count())
+                        .select_from(_ANALYSES)
+                        .where(
+                            _ANALYSES.c.workspace_id == workspace_id,
+                            _ANALYSES.c.status == AnalysisStatus.COMPLETED.value,
+                            _ANALYSES.c.summary.is_not(None),
+                        )
+                    )
+                ).scalar_one()
+            )
+            result = await connection.execute(
+                select(_ANALYSES, _PROJECTS.c.name.label("repository_name"))
+                .select_from(_ANALYSES.outerjoin(_PROJECTS, _ANALYSES.c.project_id == _PROJECTS.c.project_id))
+                .where(
+                    _ANALYSES.c.workspace_id == workspace_id,
+                    _ANALYSES.c.status == AnalysisStatus.COMPLETED.value,
+                    _ANALYSES.c.summary.is_not(None),
+                )
+                .order_by(_ANALYSES.c.created_at.desc())
+                .offset(offset)
+                .limit(limit)
+            )
+            rows = result.mappings().all()
+        return tuple(_history_from_row(row) for row in rows), count
+
+    async def delete_analysis(self, analysis_id: UUID, workspace_id: str) -> None:
+        async with self._engine.begin() as connection:
+            row = (
+                await connection.execute(
+                    select(_ANALYSES.c.status).where(
+                        _ANALYSES.c.analysis_id == analysis_id,
+                        _ANALYSES.c.workspace_id == workspace_id,
+                    )
+                )
+            ).one_or_none()
+            if row is None:
+                raise AnalysisNotFoundError
+            if row[0] != AnalysisStatus.COMPLETED.value:
+                raise ValueError("only completed analyses can be deleted")
+            await connection.execute(
+                _FILE_INSIGHTS.delete().where(_FILE_INSIGHTS.c.analysis_id == analysis_id)
+            )
+            await connection.execute(_FINDINGS.delete().where(_FINDINGS.c.analysis_id == analysis_id))
+            await connection.execute(
+                _ANALYSES.delete().where(
+                    _ANALYSES.c.analysis_id == analysis_id,
+                    _ANALYSES.c.workspace_id == workspace_id,
+                )
+            )
 
     async def create(self, repository_url: str, workspace_id: str = "default") -> AnalysisRecord:
         project = await self.get_or_create_project(repository_url, workspace_id)
@@ -1647,6 +1745,46 @@ def _risk_from_json(value: Any) -> RiskAssessment | None:
             str(key): float(item) for key, item in dict(value.get("components", {})).items()
         },
         weights={str(key): float(item) for key, item in dict(value.get("weights", {})).items()},
+    )
+
+
+def _history_from_record(
+    record: AnalysisRecord, project: ProjectRecord | None
+) -> AnalysisHistoryRecord:
+    summary = record.summary
+    if summary is None:
+        raise ValueError("completed history record requires a summary")
+    risk = summary.risk_assessment
+    return AnalysisHistoryRecord(
+        analysis_id=record.analysis_id,
+        project_id=record.project_id,
+        repository_name=project.name if project is not None else record.repository_url,
+        repository_url=record.repository_url,
+        created_at=record.created_at,
+        risk_score=risk.score if risk is not None else None,
+        risk_category=risk.category if risk is not None else None,
+        finding_count=sum(summary.finding_count_by_severity.values()),
+        analyzed_file_count=summary.analyzed_file_count,
+        duration_seconds=summary.duration_seconds,
+    )
+
+
+def _history_from_row(row: Any) -> AnalysisHistoryRecord:
+    summary = _summary_from_json(row["summary"])
+    if summary is None:
+        raise ValueError("completed history row requires a summary")
+    risk = summary.risk_assessment
+    return AnalysisHistoryRecord(
+        analysis_id=cast(UUID, row["analysis_id"]),
+        project_id=cast(UUID | None, row.get("project_id")),
+        repository_name=cast(str | None, row.get("repository_name")) or row["repository_url"],
+        repository_url=cast(str, row["repository_url"]),
+        created_at=cast(datetime, row["created_at"]),
+        risk_score=risk.score if risk is not None else None,
+        risk_category=risk.category if risk is not None else None,
+        finding_count=sum(summary.finding_count_by_severity.values()),
+        analyzed_file_count=summary.analyzed_file_count,
+        duration_seconds=summary.duration_seconds,
     )
 
 

@@ -10,6 +10,19 @@ export interface Project { project_id: string; name: string; repository_url: str
 export interface ProjectListResponse { items: Project[]; total: number; limit: number; offset: number }
 export interface AnalysisRun { analysis_id: string; project_id: string | null; status: AnalysisStatus; repository_url: string; created_at: string; failure_message: string | null }
 export interface AnalysisRunListResponse { items: AnalysisRun[]; total: number; limit: number; offset: number }
+export interface AnalysisHistoryItem {
+  analysis_id: string
+  project_id: string | null
+  repository_name: string
+  repository_url: string
+  created_at: string
+  risk_score: number | null
+  risk_category: string | null
+  finding_count: number
+  analyzed_file_count: number
+  duration_seconds: number
+}
+export interface AnalysisHistoryResponse { items: AnalysisHistoryItem[]; total: number; limit: number; offset: number }
 
 export interface AnalysisStatusResponse {
   analysis_id: string
@@ -108,6 +121,7 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
     const payload = (await response.json().catch(() => null)) as { message?: string; detail?: string } | null
     throw new Error(payload?.message || payload?.detail || `Request failed with HTTP ${response.status}.`)
   }
+  if (response.status === 204) return undefined as T
   return (await response.json()) as T
 }
 
@@ -138,6 +152,14 @@ export function getProjects(limit = 20, offset = 0): Promise<ProjectListResponse
 
 export function getProjectAnalyses(projectId: string, limit = 20, offset = 0): Promise<AnalysisRunListResponse> {
   return request<AnalysisRunListResponse>(`/api/v1/projects/${encodeURIComponent(projectId)}/analyses?limit=${limit}&offset=${offset}`)
+}
+
+export function getAnalysisHistory(limit = 20, offset = 0): Promise<AnalysisHistoryResponse> {
+  return request<AnalysisHistoryResponse>(`/api/v1/analyses/history?limit=${limit}&offset=${offset}`)
+}
+
+export function deleteAnalysis(id: string): Promise<void> {
+  return request<void>(`/api/v1/analyses/${encodeURIComponent(id)}`, { method: 'DELETE' })
 }
 
 export function getQualityPolicy(projectId: string): Promise<QualityPolicy> {

@@ -11,7 +11,8 @@ import {
   getAnalysisHotspots,
   getAnalysisFiles,
   getProjects,
-  getProjectAnalyses,
+  getAnalysisHistory,
+  deleteAnalysis,
   saveQualityPolicy,
   getQualityPolicy,
   importQualityProfile,
@@ -25,12 +26,13 @@ import {
   type FileInsight,
   type EnrichmentResponse,
   type Project,
-  type AnalysisRun,
+  type AnalysisHistoryItem,
   type LlmConfiguration,
 } from './api'
 import { createFindingsMarkdownExport, downloadMarkdownFile } from './findingsExport'
 import { createHotspotsMarkdownExport, MAX_HOTSPOTS_EXPORT } from './hotspotsExport'
 import { TableFilterDialog } from './components/TableFilterDialog'
+import { formatHistoryDate, formatHistoryRisk, isHistoryActivationKey, totalHotspots } from './analysisHistoryPresentation'
 import {
   FINDING_COLUMNS,
   FINDING_SEVERITIES,
@@ -100,7 +102,9 @@ function App() {
   const [resultsBusy, setResultsBusy] = useState(false)
   const [selectedFilePath, setSelectedFilePath] = useState<string | null>(null)
   const [projects, setProjects] = useState<Project[]>([])
-  const [projectRuns, setProjectRuns] = useState<Record<string, AnalysisRun[]>>({})
+  const [historyItems, setHistoryItems] = useState<AnalysisHistoryItem[]>([])
+  const [historyBusy, setHistoryBusy] = useState(false)
+  const [historyError, setHistoryError] = useState<string | null>(null)
   const [fileDetail, setFileDetail] = useState<FileDetail | null>(null)
   const [fileDetailBusy, setFileDetailBusy] = useState(false)
   const [fileDetailError, setFileDetailError] = useState<string | null>(null)
@@ -108,13 +112,16 @@ function App() {
   const [error, setError] = useState<string | null>(null)
 
   const refreshHistory = async () => {
+    setHistoryBusy(true)
+    setHistoryError(null)
     try {
-      const response = await getProjects()
-      setProjects(response.items)
-      const entries = await Promise.all(response.items.map(async (project) => [project.project_id, (await getProjectAnalyses(project.project_id)).items] as const))
-      setProjectRuns(Object.fromEntries(entries))
-    } catch {
-      // History remains optional; the active analysis remains usable.
+      const [history, projectCatalog] = await Promise.all([getAnalysisHistory(), getProjects()])
+      setHistoryItems(history.items)
+      setProjects(projectCatalog.items)
+    } catch (historyLoadError) {
+      setHistoryError(historyLoadError instanceof Error ? historyLoadError.message : 'Analysis history unavailable.')
+    } finally {
+      setHistoryBusy(false)
     }
   }
 
@@ -320,11 +327,11 @@ function App() {
           </section>
         )}
 
-        {activeView === 'analyses' && <HistoryView analysisId={analysisId} status={status} projects={projects} projectRuns={projectRuns} onSelectRun={(run) => {
+        {activeView === 'analyses' && <HistoryView items={historyItems} busy={historyBusy} error={historyError} onSelectRun={(run) => {
           setAnalysisId(run.analysis_id)
           setAnalyzedRepositoryUrl(run.repository_url)
-          setStatus(run.status)
-          setError(run.failure_message)
+          setStatus('completed')
+          setError(null)
           setSummary(null)
           setFindings([])
           setHotspots([])
@@ -332,6 +339,25 @@ function App() {
           setSelectedFilePath(null)
           void getAnalysisSummary(run.analysis_id).then((result) => setSummary(result.summary)).catch(() => undefined)
           navigate('overview')
+        }} onDelete={async (run) => {
+          if (!window.confirm(`Delete analysis for ${run.repository_name}?`)) return
+          try {
+            await deleteAnalysis(run.analysis_id)
+            if (analysisId === run.analysis_id) {
+              setAnalysisId(null)
+              setAnalyzedRepositoryUrl(null)
+              setStatus(null)
+              setSummary(null)
+              setFindings([])
+              setHotspots([])
+              setFileInsights([])
+              setSelectedFilePath(null)
+              navigate('analyses')
+            }
+            await refreshHistory()
+          } catch (deleteError) {
+            setError(deleteError instanceof Error ? deleteError.message : 'Analysis could not be deleted.')
+          }
         }} />}
         {activeView === 'overview' && <OverviewView analysisId={analysisId} status={status} summary={summary} />}
         {activeView === 'findings' && <FindingsView findings={findings} status={status} summary={summary} error={error || findingsError} repositoryUrl={analyzedRepositoryUrl} analysisId={analysisId} onSelectPath={(path) => { setSelectedFilePath(path); navigate('files') }} />}
@@ -559,9 +585,9 @@ function OverviewView({ analysisId, status, summary }: { analysisId: string | nu
   return <section className="page-grid"><div className="section-heading"><div><p className="kicker">Analysis overview</p><h2>{analysisId ? `Run ${analysisId.slice(0, 8)}` : 'No active analysis'}</h2></div><span className={`status-badge status-${status}`}>{status || 'idle'}</span></div><div className="metric-grid">{cards.map(([label, value, note]) => <article className="metric-card" key={label}><span>{label}</span><strong>{value}</strong><small>{note}</small></article>)}</div><div className="panel"><div className="panel-title"><span>Findings by severity</span><span className="muted">Reported by the API</span></div>{summary ? Object.entries(summary.finding_count_by_severity).map(([severity, count]) => <div className="availability-row" key={severity}><span>{severity}</span><strong>{count}</strong></div>) : <EmptyState title="Severity data pending" description="Completed analyzer output will populate this breakdown." compact />}</div><div className="panel"><div className="panel-title"><span>Analyzer outcomes</span><span className="muted">Worker evidence</span></div>{summary?.analyzer_outcomes?.length ? summary.analyzer_outcomes.map((item) => <div className="availability-row" key={item.analyzer}><span>{item.analyzer}</span><span className={`availability-${item.status}`}>{item.status}</span><small>{item.tool}</small></div>) : <EmptyState title="Analyzer evidence pending" description="Completed analyzer output will populate this list." compact />}</div><div className="panel"><div className="panel-title"><span>Optional AI explanation</span><span className="muted">Always grounded in stored evidence</span></div><button className="secondary-button" disabled={!summary || enrichmentBusy} onClick={() => void explain()} type="button">{enrichmentBusy ? 'Generating...' : 'Explain deterministic summary'}</button>{enrichmentError && <p className="error-copy" role="alert">{enrichmentError}</p>}{enrichment && <div className="ai-result"><strong>{enrichment.ai_generated ? 'AI-generated explanation' : 'AI enrichment disabled'}</strong>{enrichment.text && <p>{enrichment.text}</p>}{enrichment.citations.length > 0 && <small>Citations: {enrichment.citations.join(', ')}</small>}</div>}</div></section>
 }
 
-function HistoryView({ analysisId, status, projects, projectRuns, onSelectRun }: { analysisId: string | null; status: AnalysisStatus | null; projects: Project[]; projectRuns: Record<string, AnalysisRun[]>; onSelectRun: (run: AnalysisRun) => void }) {
-  const runs = Object.values(projectRuns).flat()
-  return <section className="page-grid"><div className="panel table-panel"><div className="panel-title"><span>Analysis history</span><span className="muted">Latest first</span></div>{runs.length ? runs.sort((left, right) => right.created_at.localeCompare(left.created_at)).map((run) => <div className="history-row" key={run.analysis_id}><span><strong>{projects.find((project) => project.project_id === run.project_id)?.name || run.repository_url}</strong><br /><code>{run.analysis_id}</code></span><span className={`status-badge status-${run.status}`}>{run.status}</span><button type="button" onClick={() => onSelectRun(run)}>Open overview</button></div>) : analysisId ? <div className="history-row"><code>{analysisId}</code><span className={`status-badge status-${status}`}>{status}</span></div> : <EmptyState title="No analyses" description="Submit a repository to create your first analysis run." compact />}</div></section>
+function HistoryView({ items, busy, error, onSelectRun, onDelete }: { items: AnalysisHistoryItem[]; busy: boolean; error: string | null; onSelectRun: (run: AnalysisHistoryItem) => void; onDelete: (run: AnalysisHistoryItem) => void }) {
+  const select = (run: AnalysisHistoryItem) => onSelectRun(run)
+  return <section className="page-grid"><div className="panel table-panel"><div className="panel-title"><span>Analysis history</span><span className="muted">Latest first</span></div>{error && <p className="error-copy" role="alert">{error}</p>}{busy ? <EmptyState title="Loading history" description="Reading completed analyses." compact /> : items.length ? <div className="history-table-wrap"><table className="history-table"><caption className="sr-only">Completed repository analyses</caption><thead><tr><th scope="col">Repository</th><th scope="col">Risk</th><th scope="col">Findings</th><th scope="col">Files</th><th scope="col">Duration</th><th scope="col">Date</th><th scope="col">Actions</th></tr></thead><tbody>{items.map((item) => <tr className="history-table-row" key={item.analysis_id} onClick={() => select(item)} onKeyDown={(event) => { if (isHistoryActivationKey(event.key)) { event.preventDefault(); select(item) } }} tabIndex={0}><th scope="row"><a href="#overview" onClick={(event) => { event.preventDefault(); select(item) }}>{item.repository_name}</a><code>{item.analysis_id}</code></th><td>{formatHistoryRisk(item.risk_score, item.risk_category)}</td><td>{item.finding_count}</td><td>{item.analyzed_file_count}</td><td>{item.duration_seconds.toFixed(1)}s</td><td>{formatHistoryDate(item.created_at)}</td><td><button aria-label={`Delete analysis ${item.repository_name}`} className="danger-button" type="button" onClick={(event) => { event.stopPropagation(); void onDelete(item) }}>Delete</button></td></tr>)}</tbody></table></div> : <EmptyState title="No analyses" description="Submit a repository to create your first completed analysis." compact />}</div></section>
 }
 
 function HotspotsView({ hotspots, status, error, repositoryUrl, analysisId, onSelectPath }: { hotspots: FileInsight[]; status: AnalysisStatus | null; error: string | null; repositoryUrl: string | null; analysisId: string | null; onSelectPath: (path: string) => void }) {
@@ -835,8 +861,9 @@ function QualityGateView({ summary, projectId, onNavigate }: { summary: Analysis
       setLlmMessage('Saved. The API key is never shown again.')
     } catch (error) { setLlmMessage(error instanceof Error ? error.message : 'LLM configuration failed.') }
   }
-  const llmPanel = <div className="panel"><div className="panel-title"><span>LLM enrichment</span><span className="muted">Optional, evidence-bound</span></div><form className="quality-policy-form" onSubmit={(event) => { event.preventDefault(); void saveLlm() }}><label><input type="checkbox" checked={llmEnabled} onChange={(event) => setLlmEnabled(event.target.checked)} /> Enable configured LLM</label><label htmlFor="llm-provider">Provider</label><input id="llm-provider" value={llmProvider} onChange={(event) => setLlmProvider(event.target.value)} /><label htmlFor="llm-model">Model</label><input id="llm-model" value={llmModel} onChange={(event) => setLlmModel(event.target.value)} /><label htmlFor="llm-api-key">API key {llm?.api_key_configured ? '(configured; leave blank to keep)' : ''}</label><input id="llm-api-key" type="password" value={llmKey} onChange={(event) => setLlmKey(event.target.value)} autoComplete="off" /><button className="secondary-button" type="submit">Save LLM configuration</button>{llmMessage && <small>{llmMessage}</small>}</form></div>
-  return <section className="page-grid">{llmPanel}<div className="panel"><div className="panel-title"><span>Quality gate</span><span className={`status-badge status-${gate.status === 'failed' ? 'failed' : 'completed'}`}>{gate.status === 'not_configured' ? 'not configured' : gate.passed ? 'passed' : 'failed'}</span></div>{projectId && <form className="quality-policy-form" onSubmit={(event) => { event.preventDefault(); void save() }}><label htmlFor="max-critical">Maximum new critical findings</label><input id="max-critical" type="number" min="0" value={maxCritical} onChange={(event) => setMaxCritical(event.target.value)} /><label htmlFor="max-risk-score">Maximum risk score</label><input id="max-risk-score" type="number" min="0" max="1" step="0.01" value={maxRisk} onChange={(event) => setMaxRisk(event.target.value)} /><label htmlFor="max-hotspots">Maximum new hotspots</label><input id="max-hotspots" type="number" min="0" value={maxHotspots} onChange={(event) => setMaxHotspots(event.target.value)} /><button className="secondary-button" type="submit">Save quality gate</button><label htmlFor="sonar-profile">Import SonarQube profile XML</label><input id="sonar-profile" type="file" accept=".xml,application/xml,text/xml" onChange={(event) => { const file = event.target.files?.[0]; if (file) void importFile(file) }} />{saveMessage && <small>{saveMessage}</small>}{importMessage && <small>{importMessage}</small>}{profiles.length > 0 && <div className="availability-row"><span>Loaded profiles</span><strong>{profiles.reduce((total, profile) => total + profile.rules.length, 0)} rules</strong><ul>{profiles.flatMap((profile) => profile.rules.map((rule) => <li key={`${profile.language}-${rule.analyzer}-${rule.rule_id}`}>{profile.language}: {rule.analyzer}:{rule.rule_id}</li>))}</ul></div>}</form>}<div className="metric-grid"><article className="metric-card"><button className="table-sort-button" type="button" onClick={() => setShowRisk((value) => !value)}><span>Risk score</span><strong>{observed.risk_score === null ? '—' : observed.risk_score.toFixed(2)}</strong></button><small>Click for breakdown</small></article><article className="metric-card"><span>New critical findings</span><strong>{observed.new_critical_findings}</strong><small><button type="button" onClick={() => onNavigate('findings')}>Open findings</button></small></article><article className="metric-card"><span>New hotspots</span><strong>{observed.new_hotspots}</strong><small><button type="button" onClick={() => onNavigate('hotspots')}>Open hotspots</button></small></article></div>{showRisk && summary.risk_assessment && <div className="panel"><div className="panel-title"><span>Risk score breakdown</span><span className="muted">v{summary.risk_assessment.version}</span></div>{Object.entries(summary.risk_assessment.components).map(([name, value]) => <div className="availability-row" key={name}><span>{name}</span><strong>{value.toFixed(2)} × {(summary.risk_assessment?.weights[name] ?? 0).toFixed(2)}</strong></div>)}<p className="muted">Score is the weighted average of normalized repository evidence components.</p></div>}{gate.status === 'not_configured' && <EmptyState title="Quality gate not configured" description="Configure at least one quality-gate threshold to evaluate this analysis." compact />}{gate.failures.length ? gate.failures.map((failure) => <div className="availability-row" key={failure.code}><strong>{failure.code}</strong><span>{failure.detail}</span></div>) : gate.status !== 'not_configured' && <EmptyState title="All configured rules passed" description="No quality-gate failure was reported." compact />}</div></section>
+  const hotspotCount = totalHotspots(summary.hotspot_count)
+  const llmPanel = <div className="panel"><div className="panel-title"><span>LLM enrichment</span><span className="muted">Optional, evidence-bound</span></div><form className="quality-policy-form" onSubmit={(event) => { event.preventDefault(); void saveLlm() }}><label className="form-checkbox"><input type="checkbox" checked={llmEnabled} onChange={(event) => setLlmEnabled(event.target.checked)} /> Enable configured LLM</label><div className="form-grid"><div className="form-field"><label htmlFor="llm-provider">Provider</label><input id="llm-provider" value={llmProvider} onChange={(event) => setLlmProvider(event.target.value)} /></div><div className="form-field"><label htmlFor="llm-model">Model</label><input id="llm-model" value={llmModel} onChange={(event) => setLlmModel(event.target.value)} /></div><div className="form-field form-field-wide"><label htmlFor="llm-api-key">API key {llm?.api_key_configured ? '(configured; leave blank to keep)' : ''}</label><input id="llm-api-key" type="password" value={llmKey} onChange={(event) => setLlmKey(event.target.value)} autoComplete="off" /></div></div><div className="form-actions"><button className="secondary-button" type="submit">Save LLM configuration</button>{llmMessage && <small className="form-message" role="status">{llmMessage}</small>}</div></form></div>
+  return <section className="page-grid">{llmPanel}<div className="panel"><div className="panel-title"><span>Quality gate</span><span className={`status-badge status-${gate.status === 'failed' ? 'failed' : 'completed'}`}>{gate.status === 'not_configured' ? 'not configured' : gate.passed ? 'passed' : 'failed'}</span></div>{projectId && <form className="quality-policy-form" onSubmit={(event) => { event.preventDefault(); void save() }}><div className="form-grid"><div className="form-field"><label htmlFor="max-critical">Maximum new critical findings</label><input id="max-critical" type="number" min="0" value={maxCritical} onChange={(event) => setMaxCritical(event.target.value)} /></div><div className="form-field"><label htmlFor="max-risk-score">Maximum risk score</label><input id="max-risk-score" type="number" min="0" max="1" step="0.01" value={maxRisk} onChange={(event) => setMaxRisk(event.target.value)} /></div><div className="form-field"><label htmlFor="max-hotspots">Maximum new hotspots</label><input id="max-hotspots" type="number" min="0" value={maxHotspots} onChange={(event) => setMaxHotspots(event.target.value)} /></div><div className="form-field form-field-wide"><label htmlFor="sonar-profile">Import SonarQube profile XML</label><input id="sonar-profile" type="file" accept=".xml,application/xml,text/xml" onChange={(event) => { const file = event.target.files?.[0]; if (file) void importFile(file) }} /></div></div><div className="form-actions"><button className="secondary-button" type="submit">Save quality gate</button>{saveMessage && <small className="form-message" role="status">{saveMessage}</small>}{importMessage && <small className="form-message" role="status">{importMessage}</small>}</div>{profiles.length > 0 && <div className="availability-row"><span>Loaded profiles</span><strong>{profiles.reduce((total, profile) => total + profile.rules.length, 0)} rules</strong><ul>{profiles.flatMap((profile) => profile.rules.map((rule) => <li key={`${profile.language}-${rule.analyzer}-${rule.rule_id}`}>{profile.language}: {rule.analyzer}:{rule.rule_id}</li>))}</ul></div>}</form>}<div className="metric-grid"><article className="metric-card"><button className="table-sort-button" type="button" onClick={() => setShowRisk((value) => !value)}><span>Risk score</span><strong>{observed.risk_score === null ? '—' : observed.risk_score.toFixed(2)}</strong></button><small>Click for breakdown</small></article><article className="metric-card"><span>New critical findings</span><strong>{observed.new_critical_findings}</strong><small><button type="button" onClick={() => onNavigate('findings')}>Open findings</button></small></article><article className="metric-card"><span>Hotspots</span><strong>{hotspotCount}</strong><small><button type="button" onClick={() => onNavigate('hotspots')}>Open hotspots</button></small></article></div>{showRisk && summary.risk_assessment && <div className="panel"><div className="panel-title"><span>Risk score breakdown</span><span className="muted">v{summary.risk_assessment.version}</span></div>{Object.entries(summary.risk_assessment.components).map(([name, value]) => <div className="availability-row" key={name}><span>{name}</span><strong>{value.toFixed(2)} × {(summary.risk_assessment?.weights[name] ?? 0).toFixed(2)}</strong></div>)}<p className="muted">Score is the weighted average of normalized repository evidence components.</p></div>}{gate.status === 'not_configured' && <EmptyState title="Quality gate not configured" description="Configure at least one quality-gate threshold to evaluate this analysis." compact />}{gate.failures.length ? gate.failures.map((failure) => <div className="availability-row" key={failure.code}><strong>{failure.code}</strong><span>{failure.detail}</span></div>) : gate.status !== 'not_configured' && <EmptyState title="All configured rules passed" description="No quality-gate failure was reported." compact />}</div></section>
 }
 
 function EmptyState({ title, description, compact = false }: { title: string; description: string; compact?: boolean }) {

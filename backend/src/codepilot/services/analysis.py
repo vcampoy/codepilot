@@ -17,6 +17,7 @@ from sqlalchemy.exc import DBAPIError, OperationalError
 from codepilot.analyzers.risk_score import FindingRisk, QualityGateConfig, evaluate_quality_gates
 from codepilot.domain.analysis import (
     AnalysisFinding,
+    AnalysisHistoryRecord,
     AnalysisNotFoundError,
     AnalysisRecord,
     AnalysisResult,
@@ -85,6 +86,10 @@ class AnalysisStatePersistenceError(TransientAnalysisError):
 
 class AnalysisEnqueueError(Exception):
     """The queued record was created but could not be handed to Celery."""
+
+
+class AnalysisDeletionConflictError(Exception):
+    """An analysis cannot be deleted while it is not completed."""
 
 
 class AnalysisQueue(Protocol):
@@ -185,6 +190,19 @@ class AnalysisService:
         return await self._repository.list_project_analyses(
             project_id, workspace_id, limit=limit, offset=offset
         )
+
+    async def list_history(
+        self, workspace_id: str, *, limit: int, offset: int
+    ) -> tuple[tuple[AnalysisHistoryRecord, ...], int]:
+        return await self._repository.list_history(workspace_id, limit=limit, offset=offset)
+
+    async def delete_analysis(self, analysis_id: UUID, workspace_id: str) -> None:
+        record = await self._repository.get(analysis_id, workspace_id)
+        if record is None:
+            raise AnalysisNotFoundError
+        if record.status is not AnalysisStatus.COMPLETED:
+            raise AnalysisDeletionConflictError
+        await self._repository.delete_analysis(analysis_id, workspace_id)
 
     async def get_quality_policy(
         self, project_id: UUID, workspace_id: str

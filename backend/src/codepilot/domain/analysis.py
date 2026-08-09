@@ -145,6 +145,22 @@ class AnalysisSummary:
     quality_policy: QualityGatePolicy | None = None
 
 
+@dataclass(frozen=True, slots=True)
+class AnalysisHistoryRecord:
+    """Completed analysis projection used by the history screen."""
+
+    analysis_id: UUID
+    project_id: UUID | None
+    repository_name: str
+    repository_url: str
+    created_at: datetime
+    risk_score: float | None
+    risk_category: str | None
+    finding_count: int
+    analyzed_file_count: int
+    duration_seconds: float
+
+
 @dataclass(slots=True)
 class AnalysisRecord:
     """Persisted analysis state and safe failure information."""
