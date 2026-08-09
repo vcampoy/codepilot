@@ -1,3 +1,4 @@
+# ruff: noqa: E501
 """Persistence boundary for Prompt 05 analysis state and findings."""
 
 from __future__ import annotations
@@ -55,6 +56,7 @@ from codepilot.domain.analysis import (
     fingerprint_finding,
 )
 from codepilot.domain.insights import FileInsight
+from codepilot.domain.quality import QualityGatePolicy, QualityProfile, QualityRule
 
 
 class AnalysisRepository(Protocol):
@@ -163,6 +165,14 @@ class AnalysisRepository(Protocol):
 
     async def fail_queued(self, analysis_id: UUID, message: str) -> None: ...
 
+    async def get_quality_policy(
+        self, project_id: UUID, workspace_id: str
+    ) -> QualityGatePolicy | None: ...
+
+    async def save_quality_policy(
+        self, project_id: UUID, workspace_id: str, policy: QualityGatePolicy
+    ) -> QualityGatePolicy: ...
+
 
 class InMemoryAnalysisRepository:
     """Small deterministic adapter for unit tests only.
@@ -177,6 +187,26 @@ class InMemoryAnalysisRepository:
         self._lock = asyncio.Lock()
         self._projects: dict[UUID, ProjectRecord] = {}
         self._project_keys: dict[tuple[str, str], UUID] = {}
+        self._quality_policies: dict[UUID, QualityGatePolicy] = {}
+
+    async def get_quality_policy(
+        self, project_id: UUID, workspace_id: str
+    ) -> QualityGatePolicy | None:
+        async with self._lock:
+            project = self._projects.get(project_id)
+            if project is None or project.workspace_id != workspace_id:
+                return None
+            return self._quality_policies.get(project_id)
+
+    async def save_quality_policy(
+        self, project_id: UUID, workspace_id: str, policy: QualityGatePolicy
+    ) -> QualityGatePolicy:
+        async with self._lock:
+            project = self._projects.get(project_id)
+            if project is None or project.workspace_id != workspace_id:
+                raise KeyError("project not found")
+            self._quality_policies[project_id] = policy
+            return policy
 
     async def get_or_create_project(self, repository_url: str, workspace_id: str) -> ProjectRecord:
         key = (workspace_id, normalize_repository_url(repository_url))
@@ -609,6 +639,20 @@ _PROJECTS = Table(
     Column("updated_at", DateTime(timezone=True), nullable=False),
     UniqueConstraint("workspace_id", "repository_key", name="uq_codepilot_project_identity"),
 )
+_QUALITY_POLICIES = Table(
+    "codepilot_quality_policies",
+    _METADATA,
+    Column(
+        "project_id",
+        Uuid(as_uuid=True),
+        ForeignKey("codepilot_projects.project_id"),
+        primary_key=True,
+    ),
+    Column("workspace_id", String(64), nullable=False),
+    Column("version", Integer, nullable=False),
+    Column("payload", JSON, nullable=False),
+    Column("updated_at", DateTime(timezone=True), nullable=False),
+)
 _FILE_INSIGHTS = Table(
     "codepilot_analysis_file_insights",
     _METADATA,
@@ -635,6 +679,52 @@ class PostgresAnalysisRepository:
 
     def __init__(self, database_url: str, engine: AsyncEngine | None = None) -> None:
         self._engine = engine or create_async_engine(database_url, pool_pre_ping=True)
+
+    async def get_quality_policy(
+        self, project_id: UUID, workspace_id: str
+    ) -> QualityGatePolicy | None:
+        async with self._engine.connect() as connection:
+            row = (
+                (
+                    await connection.execute(
+                        select(_QUALITY_POLICIES).where(
+                            _QUALITY_POLICIES.c.project_id == project_id,
+                            _QUALITY_POLICIES.c.workspace_id == workspace_id,
+                        )
+                    )
+                )
+                .mappings()
+                .first()
+            )
+        return _quality_policy_from_json(row["payload"]) if row else None
+
+    async def save_quality_policy(
+        self, project_id: UUID, workspace_id: str, policy: QualityGatePolicy
+    ) -> QualityGatePolicy:
+        payload = _quality_policy_to_json(policy)
+        now = _utc_now()
+        async with self._engine.begin() as connection:
+            statement = (
+                postgresql_insert(_QUALITY_POLICIES)
+                .values(
+                    project_id=project_id,
+                    workspace_id=workspace_id,
+                    version=policy.version,
+                    payload=payload,
+                    updated_at=now,
+                )
+                .on_conflict_do_update(
+                    index_elements=[_QUALITY_POLICIES.c.project_id],
+                    set_={
+                        "workspace_id": workspace_id,
+                        "version": policy.version,
+                        "payload": payload,
+                        "updated_at": now,
+                    },
+                )
+            )
+            await connection.execute(statement)
+        return policy
 
     async def get_or_create_project(self, repository_url: str, workspace_id: str) -> ProjectRecord:
         key = normalize_repository_url(repository_url)
@@ -1214,6 +1304,64 @@ def _project_from_row(row: Any) -> ProjectRecord:
     )
 
 
+def _quality_policy_to_json(policy: QualityGatePolicy) -> dict[str, Any]:
+    return {
+        "version": policy.version,
+        "thresholds": {
+            "max_new_critical_findings": policy.thresholds.max_new_critical_findings,
+            "max_risk_score": policy.thresholds.max_risk_score,
+            "max_new_hotspots": policy.thresholds.max_new_hotspots,
+        },
+        "profiles": [
+            {
+                "language": profile.language,
+                "rules": [
+                    {
+                        "language": rule.language,
+                        "analyzer": rule.analyzer,
+                        "rule_id": rule.rule_id,
+                        "enabled": rule.enabled,
+                    }
+                    for rule in profile.rules
+                ],
+            }
+            for profile in policy.profiles
+        ],
+    }
+
+
+def _quality_policy_from_json(value: Any) -> QualityGatePolicy:
+    payload = value if isinstance(value, dict) else {}
+    thresholds = payload.get("thresholds", {})
+    profiles = tuple(
+        QualityProfile(
+            str(item.get("language", "unknown")),
+            tuple(
+                QualityRule(
+                    str(rule.get("language", item.get("language", "unknown"))),
+                    str(rule.get("analyzer", "")),
+                    str(rule.get("rule_id", "")),
+                    bool(rule.get("enabled", True)),
+                )
+                for rule in item.get("rules", [])
+            ),
+        )
+        for item in payload.get("profiles", [])
+        if isinstance(item, dict)
+    )
+    from codepilot.analyzers.risk_score import QualityGateConfig
+
+    return QualityGatePolicy(
+        version=int(payload.get("version", 1)),
+        thresholds=QualityGateConfig(
+            max_new_critical_findings=_optional_int(thresholds.get("max_new_critical_findings")),
+            max_risk_score=_optional_float(thresholds.get("max_risk_score")),
+            max_new_hotspots=_optional_int(thresholds.get("max_new_hotspots")),
+        ),
+        profiles=profiles,
+    )
+
+
 def _source_context_to_json(context: SourceContext | None) -> dict[str, object] | None:
     if context is None:
         return None
@@ -1322,6 +1470,8 @@ def _summary_to_json(summary: AnalysisSummary) -> dict[str, object]:
         }
     if summary.baseline_analysis_id is not None:
         payload["baseline_analysis_id"] = str(summary.baseline_analysis_id)
+    if summary.quality_policy is not None:
+        payload["quality_policy"] = _quality_policy_to_json(summary.quality_policy)
     if summary.file_insights:
         payload["file_insights"] = [
             {
@@ -1403,6 +1553,11 @@ def _summary_from_json(value: Any) -> AnalysisSummary | None:
                 },
             )
             for item in value.get("file_insights", [])
+        ),
+        quality_policy=(
+            _quality_policy_from_json(value["quality_policy"])
+            if value.get("quality_policy") is not None
+            else None
         ),
     )
 

@@ -14,6 +14,7 @@ from codepilot.analyzers.risk_score import QualityGateResult, RiskAssessment
 
 if TYPE_CHECKING:
     from codepilot.domain.insights import FileInsight
+    from codepilot.domain.quality import QualityGatePolicy
 
 
 class AnalysisStatus(StrEnum):
@@ -141,6 +142,7 @@ class AnalysisSummary:
     quality_gate: QualityGateResult | None = None
     baseline_analysis_id: UUID | None = None
     file_insights: tuple[FileInsight, ...] = ()
+    quality_policy: QualityGatePolicy | None = None
 
 
 @dataclass(slots=True)

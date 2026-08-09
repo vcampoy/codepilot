@@ -1,4 +1,4 @@
-export type AnalysisStatus = 'queued' | 'running' | 'completed' | 'failed'
+﻿export type AnalysisStatus = 'queued' | 'running' | 'completed' | 'failed'
 
 export interface AnalysisAccepted {
   analysis_id: string
@@ -30,6 +30,7 @@ export interface AnalysisSummaryResponse {
     analyzer_outcomes?: AnalyzerOutcome[]
     risk_assessment?: RiskAssessment | null
     quality_gate?: QualityGate | null
+    quality_policy?: QualityPolicy | null
     baseline_analysis_id?: string | null
     hotspot_count?: number
   } | null
@@ -40,6 +41,9 @@ export interface QualityGateFailure { code: string; detail: string }
 export interface QualityGateThresholds { max_new_critical_findings: number | null; max_risk_score: number | null; max_new_hotspots: number | null }
 export interface QualityGateObserved { new_critical_findings: number; risk_score: number | null; new_hotspots: number }
 export interface QualityGate { passed: boolean; configured: boolean; status: 'passed' | 'failed' | 'not_configured'; failures: QualityGateFailure[]; thresholds: QualityGateThresholds; observed: QualityGateObserved }
+export interface QualityRule { language: string; analyzer: string; rule_id: string; enabled: boolean }
+export interface QualityProfile { language: string; rules: QualityRule[] }
+export interface QualityPolicy { version: number; configured: boolean; max_new_critical_findings: number | null; max_risk_score: number | null; max_new_hotspots: number | null; profiles: QualityProfile[] }
 export interface FileInsight { path: string; hotspot_score: number; risk: RiskAssessment | null; metrics: Record<string, number> }
 export interface FileDetail extends FileInsight { findings: AnalysisFinding[] }
 export interface AnalysisFilesResponse { items: FileInsight[]; total: number; limit: number; offset: number }
@@ -127,6 +131,18 @@ export function getProjects(limit = 20, offset = 0): Promise<ProjectListResponse
 
 export function getProjectAnalyses(projectId: string, limit = 20, offset = 0): Promise<AnalysisRunListResponse> {
   return request<AnalysisRunListResponse>(`/api/v1/projects/${encodeURIComponent(projectId)}/analyses?limit=${limit}&offset=${offset}`)
+}
+
+export function getQualityPolicy(projectId: string): Promise<QualityPolicy> {
+  return request<QualityPolicy>(`/api/v1/projects/${encodeURIComponent(projectId)}/quality-policy`)
+}
+
+export function saveQualityPolicy(projectId: string, policy: Omit<QualityPolicy, 'configured'>): Promise<QualityPolicy> {
+  return request<QualityPolicy>(`/api/v1/projects/${encodeURIComponent(projectId)}/quality-policy`, { method: 'PUT', body: JSON.stringify(policy) })
+}
+
+export function importQualityProfile(projectId: string, xml: string): Promise<{ language: string; profile_name: string | null; mapped: number; unsupported: string[]; invalid: string[] }> {
+  return request(`/api/v1/projects/${encodeURIComponent(projectId)}/quality-profiles/import`, { method: 'POST', body: xml, headers: { 'Content-Type': 'application/xml' } })
 }
 
 export function getAnalysisFindings(id: string, init?: RequestInit): Promise<AnalysisFinding[]> {

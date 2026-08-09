@@ -1,3 +1,4 @@
+# ruff: noqa: E501
 """HTTP endpoints for queued repository analyses."""
 
 from __future__ import annotations
@@ -253,6 +254,37 @@ async def analysis_summary(analysis_id: UUID, request: Request) -> AnalysisSumma
                 ],
                 "thresholds": _quality_gate_thresholds_response(summary.quality_gate.thresholds),
                 "observed": _quality_gate_observed_response(summary.quality_gate.observed),
+            }
+        if summary.quality_policy is not None:
+            summary_payload["quality_policy"] = {
+                "version": summary.quality_policy.version,
+                "configured": bool(summary.quality_policy.profiles)
+                or any(
+                    value is not None
+                    for value in (
+                        summary.quality_policy.thresholds.max_new_critical_findings,
+                        summary.quality_policy.thresholds.max_risk_score,
+                        summary.quality_policy.thresholds.max_new_hotspots,
+                    )
+                ),
+                "max_new_critical_findings": summary.quality_policy.thresholds.max_new_critical_findings,
+                "max_risk_score": summary.quality_policy.thresholds.max_risk_score,
+                "max_new_hotspots": summary.quality_policy.thresholds.max_new_hotspots,
+                "profiles": [
+                    {
+                        "language": profile.language,
+                        "rules": [
+                            {
+                                "language": rule.language,
+                                "analyzer": rule.analyzer,
+                                "rule_id": rule.rule_id,
+                                "enabled": rule.enabled,
+                            }
+                            for rule in profile.rules
+                        ],
+                    }
+                    for profile in summary.quality_policy.profiles
+                ],
             }
         if summary.baseline_analysis_id is not None:
             summary_payload["baseline_analysis_id"] = str(summary.baseline_analysis_id)

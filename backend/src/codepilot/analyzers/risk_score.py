@@ -47,6 +47,8 @@ class FindingRisk:
     finding_id: str
     severity: str
     is_new: bool
+    analyzer: str | None = None
+    rule_id: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -128,6 +130,7 @@ def evaluate_quality_gates(
     hotspot_count: int,
     config: QualityGateConfig,
     new_hotspot_count: int | None = None,
+    enabled_rules: tuple[object, ...] = (),
 ) -> QualityGateResult:
     failures: list[QualityGateFailure] = []
     critical = tuple(
@@ -144,6 +147,29 @@ def evaluate_quality_gates(
                 "critical-findings",
                 f"{len(critical)} new critical findings exceed the limit of "
                 f"{config.max_new_critical_findings}.",
+            )
+        )
+    enabled_rule_keys = {
+        (getattr(rule, "analyzer", ""), getattr(rule, "rule_id", ""))
+        for rule in enabled_rules
+    }
+    matched_rules = tuple(
+        finding.finding_id
+        for finding in findings
+        if finding.is_new
+        and finding.analyzer is not None
+        and finding.rule_id is not None
+        and any(
+            finding.rule_id == rule_id
+            and (finding.analyzer == analyzer or finding.analyzer.endswith(f".{analyzer}"))
+            for analyzer, rule_id in enabled_rule_keys
+        )
+    )
+    if enabled_rule_keys and matched_rules:
+        failures.append(
+            QualityGateFailure(
+                "enabled-rules",
+                f"{len(matched_rules)} findings match enabled quality-profile rules.",
             )
         )
     if config.max_risk_score is not None and risk_score > config.max_risk_score:

@@ -1,3 +1,4 @@
+# ruff: noqa: E501
 """Application service for asynchronous repository analysis orchestration."""
 
 from __future__ import annotations
@@ -26,6 +27,7 @@ from codepilot.domain.analysis import (
     fingerprint_finding,
 )
 from codepilot.domain.insights import calculate_repository_risk, select_hotspots
+from codepilot.domain.quality import QualityGatePolicy
 from codepilot.repositories.analysis import AnalysisRepository
 from codepilot.services.repository_ingestion import (
     RepositoryCleanupError,
@@ -184,6 +186,16 @@ class AnalysisService:
             project_id, workspace_id, limit=limit, offset=offset
         )
 
+    async def get_quality_policy(
+        self, project_id: UUID, workspace_id: str
+    ) -> QualityGatePolicy | None:
+        return await self._repository.get_quality_policy(project_id, workspace_id)
+
+    async def save_quality_policy(
+        self, project_id: UUID, workspace_id: str, policy: QualityGatePolicy
+    ) -> QualityGatePolicy:
+        return await self._repository.save_quality_policy(project_id, workspace_id, policy)
+
     async def recover_stale_analyses(self, *, now: datetime | None = None) -> int:
         """Reclaim crashed work and republish old queued identifiers."""
         current = now or datetime.now(UTC)
@@ -283,11 +295,18 @@ class AnalysisService:
                     if baseline is not None
                     else ()
                 )
+                get_policy = getattr(self._repository, "get_quality_policy", None)
+                policy = (
+                    await get_policy(record.project_id, record.workspace_id)
+                    if record.project_id is not None and get_policy is not None
+                    else None
+                )
                 summary = _build_summary(
                     result,
                     stored_findings,
                     time.perf_counter() - started,
-                    quality_gate_config=self._quality_gate_config,
+                    quality_gate_config=policy.thresholds if policy else self._quality_gate_config,
+                    quality_policy=policy,
                     baseline_analysis_id=baseline.analysis_id if baseline else None,
                     baseline_findings=baseline_findings,
                     baseline_hotspot_paths=(
@@ -439,6 +458,7 @@ def _build_summary(
     duration_seconds: float,
     *,
     quality_gate_config: QualityGateConfig,
+    quality_policy: QualityGatePolicy | None = None,
     baseline_analysis_id: UUID | None = None,
     baseline_findings: Sequence[AnalysisFinding] = (),
     baseline_hotspot_paths: Sequence[str] = (),
@@ -458,12 +478,15 @@ def _build_summary(
                     finding.path,
                     finding.severity,
                     is_new=fingerprint_finding(finding) not in baseline_fingerprints,
+                    analyzer=finding.analyzer,
+                    rule_id=finding.rule_id,
                 )
                 for finding in findings
             ),
             risk_score=risk.score if risk else 0.0,
             hotspot_count=len(hotspots),
             config=quality_gate_config,
+            enabled_rules=quality_policy.enabled_rules if quality_policy else (),
             new_hotspot_count=new_hotspot_count,
         )
         if result.file_insights
@@ -479,6 +502,7 @@ def _build_summary(
         quality_gate=gate,
         baseline_analysis_id=baseline_analysis_id,
         file_insights=result.file_insights,
+        quality_policy=quality_policy,
     )
 
 

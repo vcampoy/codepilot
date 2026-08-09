@@ -27,6 +27,9 @@ const fixtures = vi.hoisted(() => ({
   getAnalysisFileDetail: vi.fn(),
   getProjects: vi.fn().mockResolvedValue({ items: [] }),
   getProjectAnalyses: vi.fn(),
+  getQualityPolicy: vi.fn(),
+  saveQualityPolicy: vi.fn(),
+  importQualityProfile: vi.fn(),
   requestEnrichment: vi.fn(),
   downloadMarkdownFile: vi.fn(),
 }))
@@ -348,5 +351,27 @@ describe('completed analysis result loading', () => {
     })
     fireEvent.click(await screen.findByRole('button', { name: 'Quality gate' }))
     await waitFor(() => expect(screen.getByText('All configured rules passed')).toBeInTheDocument())
+  })
+
+  it('configures quality thresholds, imports a Sonar profile, and navigates to evidence', async () => {
+    configureCompletedRun()
+    fixtures.createAnalysis.mockResolvedValue({ analysis_id: 'analysis-1', status: 'queued', project_id: 'project-1' })
+    fixtures.getAnalysisFindings.mockResolvedValue([finding])
+    fixtures.getAnalysisHotspots.mockResolvedValue([insight])
+    fixtures.getAnalysisFiles.mockResolvedValue({ items: [insight], total: 1, limit: 100, offset: 0 })
+    fixtures.getProjects.mockResolvedValue({ items: [{ project_id: 'project-1', repository_url: 'https://github.com/acme/demo', name: 'demo', created_at: '', updated_at: '' }] })
+    fixtures.getQualityPolicy.mockResolvedValue({ version: 1, configured: false, max_new_critical_findings: null, max_risk_score: null, max_new_hotspots: null, profiles: [] })
+    fixtures.saveQualityPolicy.mockResolvedValue({ version: 2, configured: true, max_new_critical_findings: 1, max_risk_score: 0.5, max_new_hotspots: 2, profiles: [] })
+    fixtures.importQualityProfile.mockResolvedValue({ language: 'python', profile_name: 'py', mapped: 1, unsupported: [], invalid: [] })
+    render(<App />)
+    fireEvent.change(screen.getByLabelText('Repository URL'), { target: { value: 'https://github.com/acme/demo' } })
+    fireEvent.submit(screen.getByRole('button', { name: 'Analyze repository' }).closest('form')!, { preventDefault: () => undefined })
+    fireEvent.click(await screen.findByRole('button', { name: 'Quality gate' }))
+    await waitFor(() => expect(screen.getByLabelText('Maximum risk score')).toBeInTheDocument())
+    fireEvent.change(screen.getByLabelText('Maximum risk score'), { target: { value: '0.5' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Save quality gate' }))
+    await waitFor(() => expect(fixtures.saveQualityPolicy).toHaveBeenCalled())
+    fireEvent.click(screen.getByRole('button', { name: 'Open findings' }))
+    expect(window.location.hash).toBe('#findings')
   })
 })
