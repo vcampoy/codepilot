@@ -543,7 +543,10 @@ describe('completed analysis result loading', () => {
     fixtures.getAnalysisFileDetail.mockResolvedValue({ ...insight, findings: multipleContextualFindings })
 
     render(<App />)
-    fireEvent.submit(screen.getByRole('button', { name: 'Analyze repository' }).closest('form')!, { preventDefault: () => undefined })
+    fireEvent.submit(
+      screen.getByRole('button', { name: 'Analyze repository' }).closest('form')!,
+      { preventDefault: () => undefined },
+    )
     fireEvent.click(await screen.findByRole('button', { name: 'File detail' }))
     const firstFinding = await screen.findByRole('button', { name: /PY001/ })
     const secondFinding = screen.getByRole('button', { name: /PY002/ })

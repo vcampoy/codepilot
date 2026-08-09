@@ -12,6 +12,7 @@ from codepilot.analyzers.multilanguage_adapters import (
     SarifFileAnalyzer,
     SarifTooDeepError,
     SarifTooLargeError,
+    _load_sarif_document,
     parse_eslint_json,
     parse_sarif_json,
 )
@@ -104,6 +105,11 @@ def test_sarif_rejects_malformed_nested_and_oversized_documents() -> None:
         nested = [nested]
     with pytest.raises(SarifTooDeepError):
         parse_sarif_json(json.dumps(nested), max_depth=3)
+
+
+def test_sarif_loader_rejects_non_object_documents_with_type_error() -> None:
+    with pytest.raises(TypeError, match="SARIF document must be a JSON object"):
+        _load_sarif_document("[]", max_bytes=100, max_depth=3)
 
 
 def test_sarif_file_analyzer_and_eslint_metadata(tmp_path: Path) -> None:

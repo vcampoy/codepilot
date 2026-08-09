@@ -38,7 +38,10 @@ def _create_local_git_repository(path: Path) -> None:
     subprocess.run(
         ["git", "-C", str(path), "config", "user.email", "tests@example.com"], check=True
     )
-    subprocess.run(["git", "-C", str(path), "config", "user.name", "CodePilot Tests"], check=True)
+    # The executable and arguments are test-owned constants for this local fixture.
+    subprocess.run(  # nosec B607
+        ["git", "-C", str(path), "config", "user.name", "CodePilot Tests"], check=True
+    )
     (path / "src").mkdir()
     (path / "src" / "main.py").write_text("print('untrusted content')\n", encoding="utf-8")
     (path / "src" / "app.ts").write_text("export const app = true;\n", encoding="utf-8")
@@ -50,7 +53,10 @@ def _create_local_git_repository(path: Path) -> None:
     (path / "dist").mkdir()
     (path / "dist" / "bundle.js").write_text("ignored\n", encoding="utf-8")
     (path / "generated.g.cs").write_text("ignored\n", encoding="utf-8")
-    subprocess.run(["git", "-C", str(path), "add", "."], check=True)
+    # The executable and arguments are test-owned constants for this local fixture.
+    subprocess.run(  # nosec B607
+        ["git", "-C", str(path), "add", "."], check=True
+    )
     subprocess.run(["git", "-C", str(path), "commit", "-m", "fixture"], check=True)
 
 

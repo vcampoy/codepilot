@@ -20,7 +20,16 @@ const hotspots: readonly FileInsight[] = [
 const details: Readonly<Record<string, FileDetail>> = {
   'src/main.py': {
     ...hotspots[0],
-    findings: [{ path: 'src/main.py', rule_id: 'PY001', analyzer: 'ruff', severity: 'error', message: 'Fix this issue', start_line: 4, end_line: 4, remediation: 'Refactor safely.' }],
+    findings: [{
+      path: 'src/main.py',
+      rule_id: 'PY001',
+      analyzer: 'ruff',
+      severity: 'error',
+      message: 'Fix this issue',
+      start_line: 4,
+      end_line: 4,
+      remediation: 'Refactor safely.',
+    }],
   },
 }
 

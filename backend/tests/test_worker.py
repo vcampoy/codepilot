@@ -1,5 +1,5 @@
 import os
-import subprocess
+import subprocess  # nosec B404: fixed interpreter and test-owned command.
 import sys
 from pathlib import Path
 

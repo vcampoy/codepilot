@@ -223,7 +223,11 @@ function App() {
     void getAnalysisFileDetail(analysisId, selectedFilePath, { signal: controller.signal })
       .then((detail) => { if (!controller.signal.aborted) setFileDetail(detail) })
       .catch((detailError) => {
-        if (!controller.signal.aborted) setFileDetailError(detailError instanceof Error ? detailError.message : 'File detail unavailable.')
+        if (!controller.signal.aborted) {
+          setFileDetailError(
+            detailError instanceof Error ? detailError.message : 'File detail unavailable.',
+          )
+        }
       })
       .finally(() => { if (!controller.signal.aborted) setFileDetailBusy(false) })
     return () => controller.abort()
@@ -309,7 +313,10 @@ function App() {
               <div>
                 <p className="kicker">Start with a public repository</p>
                 <h2>Make the next change with better evidence.</h2>
-                <p>Submit a Git HTTPS URL. CodePilot will clone it safely, queue an analysis, and keep you close to the source.</p>
+                <p>
+                  {'Submit a Git HTTPS URL. CodePilot will clone it safely, queue an analysis, '
+                    + 'and keep you close to the source.'}
+                </p>
               </div>
               <form onSubmit={submitRepository} className="repo-form">
                 <label htmlFor="repository-url">Repository URL</label>
@@ -562,14 +569,26 @@ function FindingsView({ findings, status, summary, error, repositoryUrl, analysi
   )
 }
 
-function OverviewView({ analysisId, status, summary }: { analysisId: string | null; status: AnalysisStatus | null; summary: AnalysisSummaryResponse['summary'] }) {
+function OverviewView({
+  analysisId,
+  status,
+  summary,
+}: {
+  analysisId: string | null
+  status: AnalysisStatus | null
+  summary: AnalysisSummaryResponse['summary']
+}) {
   const [enrichment, setEnrichment] = useState<EnrichmentResponse | null>(null)
   const [enrichmentBusy, setEnrichmentBusy] = useState(false)
   const [enrichmentError, setEnrichmentError] = useState<string | null>(null)
   const severityTotal = summary ? Object.values(summary.finding_count_by_severity).reduce((total, value) => total + value, 0) : null
   const risk = summary?.risk_assessment
   const cards = [
-    ['Risk score', risk ? `${risk.score.toFixed(2)} (${risk.category})` : '—', risk ? `Version ${risk.version}` : 'Risk model data unavailable'],
+    [
+      'Risk score',
+      risk ? `${risk.score.toFixed(2)} (${risk.category})` : '—',
+      risk ? `Version ${risk.version}` : 'Risk model data unavailable',
+    ],
     ['Findings', severityTotal === null ? 'â€”' : String(severityTotal), 'From completed analyzer output'],
     ['Files analyzed', summary ? String(summary.analyzed_file_count) : 'â€”', 'Repository evidence'],
     ['Duration', summary ? `${summary.duration_seconds.toFixed(1)}s` : 'â€”', 'Worker execution time'],
@@ -871,7 +890,14 @@ function FindingDetailCard({ finding, expanded, onToggle }: { finding: AnalysisF
       {expanded && finding.source_context && (
         <div className="source-context" id={sourceId} aria-label={`Source context for lines ${finding.start_line}-${finding.end_line}`}>
           {finding.source_context.lines.map((line) => (
-            <div className={`source-line ${line.highlighted || (line.number >= finding.start_line && line.number <= finding.end_line) ? 'source-line-highlight' : ''}`} key={line.number}>
+            <div
+              className={`source-line ${
+                line.highlighted ||
+                (line.number >= finding.start_line && line.number <= finding.end_line)
+                  ? 'source-line-highlight'
+                  : ''}`}
+              key={line.number}
+            >
               <span className="source-line-number">{line.number}</span>
               <code>{line.text || ' '}</code>
             </div>
@@ -908,12 +934,21 @@ function FileDetailView({ detail, path, files, status, busy, error, catalogError
       </div>
       <div className="metric-grid">
         <article className="metric-card"><span>Hotspot score</span><strong>{detail.hotspot_score.toFixed(2)}</strong><small>History and finding evidence</small></article>
-        <article className="metric-card"><span>Risk</span><strong>{detail.risk ? detail.risk.score.toFixed(2) : '—'}</strong><small>{detail.risk ? `${detail.risk.category} · v${detail.risk.version}` : 'Unavailable'}</small></article>
+        <article className="metric-card">
+          <span>Risk</span>
+          <strong>{detail.risk ? detail.risk.score.toFixed(2) : '—'}</strong>
+          <small>{detail.risk ? `${detail.risk.category} · v${detail.risk.version}` : 'Unavailable'}</small>
+        </article>
         <article className="metric-card"><span>Findings</span><strong>{detail.findings.length}</strong><small>Stored analyzer evidence</small></article>
       </div>
       <div className="panel">
         <div className="panel-title"><span>Risk components</span><span className="muted">Normalized values</span></div>
-        {Object.entries(detail.risk?.components ?? {}).map(([name, value]) => <div className="availability-row" key={name}><span>{name}</span><strong>{value.toFixed(2)}</strong></div>)}
+        {Object.entries(detail.risk?.components ?? {}).map(([name, value]) => (
+          <div className="availability-row" key={name}>
+            <span>{name}</span>
+            <strong>{value.toFixed(2)}</strong>
+          </div>
+        ))}
       </div>
       <div className="panel">
         <div className="panel-title"><span>Findings in file</span></div>

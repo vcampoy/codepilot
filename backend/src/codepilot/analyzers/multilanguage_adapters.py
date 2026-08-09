@@ -119,7 +119,7 @@ def _load_sarif_document(payload: str | bytes, max_bytes: int, max_depth: int) -
     document = json.loads(raw)
     _check_depth(document, 0, max_depth)
     if not isinstance(document, dict):
-        raise ValueError("SARIF document must be a JSON object.")
+        raise TypeError("SARIF document must be a JSON object.")
     if document.get("version") != "2.1.0" or not isinstance(document.get("runs"), list):
         raise ValueError("SARIF document must use version 2.1.0 and contain runs.")
     return document
