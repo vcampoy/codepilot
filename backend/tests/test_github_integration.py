@@ -195,6 +195,7 @@ def test_github_client_retries_rate_limit_and_creates_concise_check() -> None:
         return None
 
     client = GitHubClient(request=request, sleep=no_sleep, max_retries=1)
+    # Fixture credential for retry coverage.
     result = asyncio.run(
         client.create_check_run(
             "acme/project",
@@ -206,7 +207,7 @@ def test_github_client_retries_rate_limit_and_creates_concise_check() -> None:
                 "conclusion": "failure",
                 "output": {"title": "CodePilot quality gate", "summary": "2 issues"},
             },
-            token="installation-token",
+            token="installation-token",  # nosec
         )
     )
 

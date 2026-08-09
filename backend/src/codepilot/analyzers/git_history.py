@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import shutil
 import subprocess
 from collections import Counter, defaultdict
 from collections.abc import Mapping
@@ -107,8 +108,10 @@ class GitHistoryService:
         )
 
     def _run_log(self, repository_path: Path) -> str:
-        command = [
-            "git",
+        executable = shutil.which("git")
+        if executable is None:
+            raise GitHistoryError("Git executable is not available.")
+        command = (
             "log",
             "--numstat",
             "--date=iso-strict",
@@ -118,10 +121,11 @@ class GitHistoryService:
             f"--max-count={self._config.max_commits}",
             "--",
             ".",
-        ]
+        )
         try:
             completed = subprocess.run(
-                command,
+                # Git executable and arguments are constructed internally.
+                (executable, *command),  # nosec B603
                 cwd=repository_path,
                 check=True,
                 capture_output=True,

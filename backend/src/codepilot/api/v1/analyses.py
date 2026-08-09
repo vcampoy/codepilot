@@ -349,7 +349,12 @@ def _outcome_payload(item: AnalyzerOutcome) -> dict[str, object]:
 
 def _quality_gate_payload(summary: AnalysisSummary) -> dict[str, object]:
     gate = summary.quality_gate
-    assert gate is not None
+    if gate is None:
+        raise ApplicationError(
+            "quality_gate_unavailable",
+            "Quality gate data is unavailable.",
+            status_code=500,
+        )
     return {
         "passed": gate.passed,
         "configured": gate.configured,

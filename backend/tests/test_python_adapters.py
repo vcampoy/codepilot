@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import json
 from pathlib import Path
+from typing import Final
 
 from codepilot.analyzers.framework import AnalyzerContext
 from codepilot.analyzers.python_adapters import (
@@ -15,6 +16,64 @@ from codepilot.analyzers.python_adapters import (
     parse_radon_cc_json,
     parse_ruff_json,
 )
+
+_BANDIT_POLICY_PAYLOAD: Final = json.dumps(
+    {
+        "results": [
+            {
+                "test_id": "B101",
+                "issue_text": "Use of assert",
+                "issue_severity": "LOW",
+                "filename": "backend/tests/test_policy.py",
+                "line_number": 1,
+            },
+            {
+                "test_id": "B101",
+                "issue_text": "Use of assert",
+                "issue_severity": "LOW",
+                "filename": "backend/src/codepilot/policy.py",
+                "line_number": 2,
+            },
+        ]
+    }
+)
+
+
+def test_bandit_policy_excludes_backend_pytest_asserts_but_keeps_production() -> None:
+    findings = parse_bandit_json(_BANDIT_POLICY_PAYLOAD, Path("."))
+
+    assert [(finding.rule_id, finding.path, finding.start_line) for finding in findings] == [
+        ("B101", "backend/src/codepilot/policy.py", 2)
+    ]
+
+
+def test_bandit_policy_excludes_backend_root_pytest_asserts_but_keeps_production() -> None:
+    payload = json.dumps(
+        {
+            "results": [
+                {
+                    "test_id": "B101",
+                    "issue_text": "Use of assert",
+                    "issue_severity": "LOW",
+                    "filename": "tests/test_policy.py",
+                    "line_number": 1,
+                },
+                {
+                    "test_id": "B101",
+                    "issue_text": "Use of assert",
+                    "issue_severity": "LOW",
+                    "filename": "src/codepilot/policy.py",
+                    "line_number": 2,
+                },
+            ]
+        }
+    )
+
+    findings = parse_bandit_json(payload, Path("backend"))
+
+    assert [(finding.rule_id, finding.path, finding.start_line) for finding in findings] == [
+        ("B101", "src/codepilot/policy.py", 2)
+    ]
 
 
 def test_ruff_parser_normalizes_rule_location_and_fingerprint() -> None:

@@ -51,9 +51,20 @@ export interface AnalysisSummaryResponse {
 
 export interface RiskAssessment { score: number; category: string; version: string; components: Record<string, number>; weights: Record<string, number> }
 export interface QualityGateFailure { code: string; detail: string }
-export interface QualityGateThresholds { max_new_critical_findings: number | null; max_risk_score: number | null; max_new_hotspots: number | null }
+export interface QualityGateThresholds {
+  max_new_critical_findings: number | null
+  max_risk_score: number | null
+  max_new_hotspots: number | null
+}
 export interface QualityGateObserved { new_critical_findings: number; risk_score: number | null; new_hotspots: number }
-export interface QualityGate { passed: boolean; configured: boolean; status: 'passed' | 'failed' | 'not_configured'; failures: QualityGateFailure[]; thresholds: QualityGateThresholds; observed: QualityGateObserved }
+export interface QualityGate {
+  passed: boolean
+  configured: boolean
+  status: 'passed' | 'failed' | 'not_configured'
+  failures: QualityGateFailure[]
+  thresholds: QualityGateThresholds
+  observed: QualityGateObserved
+}
 export interface QualityRule { language: string; analyzer: string; rule_id: string; enabled: boolean }
 export interface QualityProfile { language: string; rules: QualityRule[] }
 export interface QualityPolicy { version: number; configured: boolean; max_new_critical_findings: number | null; max_risk_score: number | null; max_new_hotspots: number | null; profiles: QualityProfile[] }
@@ -211,7 +222,12 @@ export function getLlmConfiguration(): Promise<LlmConfiguration> {
   return request<LlmConfiguration>('/api/v1/settings/llm')
 }
 
-export function saveLlmConfiguration(payload: { enabled: boolean; provider: string; model: string; api_key?: string }): Promise<LlmConfiguration> {
+export function saveLlmConfiguration(payload: {
+  enabled: boolean
+  provider: string
+  model: string
+  api_key?: string
+}): Promise<LlmConfiguration> {
   return request<LlmConfiguration>('/api/v1/settings/llm', { method: 'PUT', body: JSON.stringify(payload) })
 }
 

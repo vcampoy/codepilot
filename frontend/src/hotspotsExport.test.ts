@@ -7,7 +7,13 @@ const hotspots: readonly FileInsight[] = [
   {
     path: 'src/main.py',
     hotspot_score: 0.91,
-    risk: { score: 0.88, category: 'critical', version: '1.0', components: { complexity: 0.9 }, weights: { complexity: 1 } },
+    risk: {
+      score: 0.88,
+      category: 'critical',
+      version: '1.0',
+      components: { complexity: 0.9 },
+      weights: { complexity: 1 },
+    },
     metrics: { complexity: 0.9, coupling: 0.4 },
   },
 ]

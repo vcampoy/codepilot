@@ -545,7 +545,11 @@ function FindingsView({ findings, status, summary, error, repositoryUrl, analysi
                         </small>
                       </td>}
                       {visibleColumns.includes('severity') && <td data-label="Severity"><span className={`severity-badge severity-${severity}`}>{severity}</span></td>}
-                      {visibleColumns.includes('type') && <td data-label="Type"><span className="category-badge">{categoryLabel(finding.category)}</span></td>}
+                      {visibleColumns.includes('type') && (
+                        <td data-label="Type">
+                          <span className="category-badge">{categoryLabel(finding.category)}</span>
+                        </td>
+                      )}
                     </tr>
                   )
                 })}
@@ -582,7 +586,93 @@ function OverviewView({ analysisId, status, summary }: { analysisId: string | nu
       setEnrichmentBusy(false)
     }
   }
-  return <section className="page-grid"><div className="section-heading"><div><p className="kicker">Analysis overview</p><h2>{analysisId ? `Run ${analysisId.slice(0, 8)}` : 'No active analysis'}</h2></div><span className={`status-badge status-${status}`}>{status || 'idle'}</span></div><div className="metric-grid">{cards.map(([label, value, note]) => <article className="metric-card" key={label}><span>{label}</span><strong>{value}</strong><small>{note}</small></article>)}</div><div className="panel"><div className="panel-title"><span>Findings by severity</span><span className="muted">Reported by the API</span></div>{summary ? Object.entries(summary.finding_count_by_severity).map(([severity, count]) => <div className="availability-row" key={severity}><span>{severity}</span><strong>{count}</strong></div>) : <EmptyState title="Severity data pending" description="Completed analyzer output will populate this breakdown." compact />}</div><div className="panel"><div className="panel-title"><span>Analyzer outcomes</span><span className="muted">Worker evidence</span></div>{summary?.analyzer_outcomes?.length ? summary.analyzer_outcomes.map((item) => <div className="availability-row" key={item.analyzer}><span>{item.analyzer}</span><span className={`availability-${item.status}`}>{item.status}</span><small>{item.tool}</small></div>) : <EmptyState title="Analyzer evidence pending" description="Completed analyzer output will populate this list." compact />}</div><div className="panel"><div className="panel-title"><span>Optional AI explanation</span><span className="muted">Always grounded in stored evidence</span></div><button className="secondary-button" disabled={!summary || enrichmentBusy} onClick={() => void explain()} type="button">{enrichmentBusy ? 'Generating...' : 'Explain deterministic summary'}</button>{enrichmentError && <p className="error-copy" role="alert">{enrichmentError}</p>}{enrichment && <div className="ai-result"><strong>{enrichment.ai_generated ? 'AI-generated explanation' : 'AI enrichment disabled'}</strong>{enrichment.text && <p>{enrichment.text}</p>}{enrichment.citations.length > 0 && <small>Citations: {enrichment.citations.join(', ')}</small>}</div>}</div></section>
+  return (
+    <section className="page-grid">
+      <div className="section-heading">
+        <div>
+          <p className="kicker">Analysis overview</p>
+          <h2>{analysisId ? `Run ${analysisId.slice(0, 8)}` : 'No active analysis'}</h2>
+        </div>
+        <span className={`status-badge status-${status}`}>{status || 'idle'}</span>
+      </div>
+      <div className="metric-grid">
+        {cards.map(([label, value, note]) => (
+          <article className="metric-card" key={label}>
+            <span>{label}</span>
+            <strong>{value}</strong>
+            <small>{note}</small>
+          </article>
+        ))}
+      </div>
+      <div className="panel">
+        <div className="panel-title">
+          <span>Findings by severity</span>
+          <span className="muted">Reported by the API</span>
+        </div>
+        {summary ? (
+          Object.entries(summary.finding_count_by_severity).map(([severity, count]) => (
+            <div className="availability-row" key={severity}>
+              <span>{severity}</span>
+              <strong>{count}</strong>
+            </div>
+          ))
+        ) : (
+          <EmptyState
+            title="Severity data pending"
+            description="Completed analyzer output will populate this breakdown."
+            compact
+          />
+        )}
+      </div>
+      <div className="panel">
+        <div className="panel-title">
+          <span>Analyzer outcomes</span>
+          <span className="muted">Worker evidence</span>
+        </div>
+        {summary?.analyzer_outcomes?.length ? (
+          summary.analyzer_outcomes.map((item) => (
+            <div className="availability-row" key={item.analyzer}>
+              <span>{item.analyzer}</span>
+              <span className={`availability-${item.status}`}>{item.status}</span>
+              <small>{item.tool}</small>
+            </div>
+          ))
+        ) : (
+          <EmptyState
+            title="Analyzer evidence pending"
+            description="Completed analyzer output will populate this list."
+            compact
+          />
+        )}
+      </div>
+      <div className="panel">
+        <div className="panel-title">
+          <span>Optional AI explanation</span>
+          <span className="muted">Always grounded in stored evidence</span>
+        </div>
+        <button
+          className="secondary-button"
+          disabled={!summary || enrichmentBusy}
+          onClick={() => void explain()}
+          type="button"
+        >
+          {enrichmentBusy ? 'Generating...' : 'Explain deterministic summary'}
+        </button>
+        {enrichmentError && <p className="error-copy" role="alert">{enrichmentError}</p>}
+        {enrichment && (
+          <div className="ai-result">
+            <strong>
+              {enrichment.ai_generated ? 'AI-generated explanation' : 'AI enrichment disabled'}
+            </strong>
+            {enrichment.text && <p>{enrichment.text}</p>}
+            {enrichment.citations.length > 0 && (
+              <small>Citations: {enrichment.citations.join(', ')}</small>
+            )}
+          </div>
+        )}
+      </div>
+    </section>
+  )
 }
 
 function HistoryView({ items, busy, error, onSelectRun, onDelete }: { items: AnalysisHistoryItem[]; busy: boolean; error: string | null; onSelectRun: (run: AnalysisHistoryItem) => void; onDelete: (analysisIds: readonly string[]) => Promise<AnalysisDeletionResult> }) {
@@ -845,7 +935,15 @@ function FileDetailView({ detail, path, files, status, busy, error, catalogError
   )
 }
 
-function QualityGateView({ summary, projectId, onNavigate }: { summary: AnalysisSummaryResponse['summary']; projectId: string | null; onNavigate: (view: View) => void }) {
+function QualityGateView({
+  summary,
+  projectId,
+  onNavigate,
+}: {
+  summary: AnalysisSummaryResponse['summary']
+  projectId: string | null
+  onNavigate: (view: View) => void
+}) {
   const gate = summary?.quality_gate ?? { passed: false, configured: false, status: 'not_configured' as const, failures: [], thresholds: { max_new_critical_findings: null, max_risk_score: null, max_new_hotspots: null }, observed: { new_critical_findings: 0, risk_score: null, new_hotspots: 0 } }
   const observed = gate.observed
   const [showRisk, setShowRisk] = useState(false)

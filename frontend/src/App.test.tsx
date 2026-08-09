@@ -187,7 +187,10 @@ describe('analysis history and quality KPI', () => {
     fixtures.getAnalysisHistory.mockResolvedValue({ items: [historyItem], total: 1, limit: 20, offset: 0 })
     fixtures.deleteAnalysis.mockResolvedValue(undefined)
     render(<App />)
-    fireEvent.submit(screen.getByRole('button', { name: 'Analyze repository' }).closest('form')!, { preventDefault: () => undefined })
+    fireEvent.submit(
+      screen.getByRole('button', { name: 'Analyze repository' }).closest('form')!,
+      { preventDefault: () => undefined },
+    )
     fireEvent.click(await screen.findByRole('button', { name: 'Analysis history' }))
     expect(await screen.findByRole('columnheader', { name: 'Repository' })).toBeInTheDocument()
     expect(screen.getByRole('rowheader', { name: /demo/ })).toBeInTheDocument()
@@ -444,7 +447,13 @@ describe('completed analysis result loading', () => {
 
   it('exports visible hotspots, fetches related details, and tolerates one detail failure', async () => {
     configureCompletedRun()
-    const secondInsight = { ...insight, path: 'src/other.py', hotspot_score: 0.4, risk: { ...insight.risk!, score: 0.4, category: 'medium' }, metrics: { complexity: 0.4 } }
+    const secondInsight = {
+      ...insight,
+      path: 'src/other.py',
+      hotspot_score: 0.4,
+      risk: { ...insight.risk!, score: 0.4, category: 'medium' },
+      metrics: { complexity: 0.4 },
+    }
     fixtures.getAnalysisFindings.mockResolvedValue([finding])
     fixtures.getAnalysisHotspots.mockResolvedValue([insight, secondInsight])
     fixtures.getAnalysisFiles.mockResolvedValue({ items: [insight, secondInsight], total: 2, limit: 100, offset: 0 })

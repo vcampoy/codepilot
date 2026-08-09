@@ -13,8 +13,15 @@ from httpx import Response
 from pydantic import SecretStr
 
 from codepilot.analyzers.risk_score import RiskScoreConfig, calculate_risk
+from codepilot.api.v1.analyses import _quality_gate_payload
+from codepilot.core.errors import ApplicationError
 from codepilot.core.settings import Settings
-from codepilot.domain.analysis import AnalysisFinding, AnalysisResult, AnalyzerOutcome
+from codepilot.domain.analysis import (
+    AnalysisFinding,
+    AnalysisResult,
+    AnalysisSummary,
+    AnalyzerOutcome,
+)
 from codepilot.domain.insights import FileInsight
 from codepilot.llm.contracts import DeterministicEvidence, EnrichmentResult, EnrichmentTask
 from codepilot.main import create_app
@@ -272,6 +279,17 @@ def test_insights_summary_exposes_risk_and_quality_gate() -> None:
         "max_risk_score": None,
         "max_new_hotspots": None,
     }
+
+
+def test_quality_gate_payload_raises_application_error_when_gate_is_missing() -> None:
+    summary = AnalysisSummary(0, 0, {}, 0.0)
+
+    with pytest.raises(ApplicationError) as error:
+        _quality_gate_payload(summary)
+
+    assert error.value.code == "quality_gate_unavailable"
+    assert error.value.message == "Quality gate data is unavailable."
+    assert error.value.status_code == 500
 
 
 def test_insights_hotspots_endpoint_exposes_ranked_file() -> None:

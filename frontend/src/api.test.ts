@@ -1,5 +1,15 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { createAnalysis, getAnalysisFileDetail, getAnalysisFiles, getAnalysisFindings, getAnalysisHotspots, getAnalysisStatus, getAnalysisSummary, getLlmConfiguration, saveLlmConfiguration } from './api'
+import {
+  createAnalysis,
+  getAnalysisFileDetail,
+  getAnalysisFiles,
+  getAnalysisFindings,
+  getAnalysisHotspots,
+  getAnalysisStatus,
+  getAnalysisSummary,
+  getLlmConfiguration,
+  saveLlmConfiguration,
+} from './api'
 
 afterEach(() => {
   vi.unstubAllGlobals()
@@ -119,7 +129,18 @@ describe('analysis API client', () => {
   })
 
   it('saves and reads secret-safe LLM configuration', async () => {
-    const fetchMock = vi.fn().mockImplementation(() => new Response(JSON.stringify({ enabled: true, provider: 'openai', model: 'gpt-test', api_key_configured: true }), { status: 200 }))
+    const fetchMock = vi.fn().mockImplementation(
+      () =>
+        new Response(
+          JSON.stringify({
+            enabled: true,
+            provider: 'openai',
+            model: 'gpt-test',
+            api_key_configured: true,
+          }),
+          { status: 200 },
+        ),
+    )
     vi.stubGlobal('fetch', fetchMock)
     await expect(saveLlmConfiguration({ enabled: true, provider: 'openai', model: 'gpt-test', api_key: 'sk-test' })).resolves.toMatchObject({ api_key_configured: true })
     await expect(getLlmConfiguration()).resolves.toMatchObject({ provider: 'openai' })

@@ -65,3 +65,23 @@ def test_invalid_history_limits_are_rejected() -> None:
         GitHistoryConfig(max_commits=0)
     with pytest.raises(ValueError):
         GitHistoryConfig(window_days=0)
+
+
+def test_git_history_keeps_repository_path_out_of_git_arguments(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    calls: list[tuple[tuple[str, ...], Path]] = []
+
+    def fake_run(command: tuple[str, ...], *, cwd: Path, **_kwargs: object) -> object:
+        calls.append((command, cwd))
+        return type("Completed", (), {"stdout": ""})()
+
+    monkeypatch.setattr("codepilot.analyzers.git_history.subprocess.run", fake_run)
+
+    GitHistoryService().collect(tmp_path)
+
+    assert calls
+    command, cwd = calls[0]
+    assert cwd == tmp_path
+    assert command[-2:] == ("--", ".")
+    assert str(tmp_path) not in command

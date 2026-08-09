@@ -147,22 +147,35 @@ def parse_ruff_json(payload: str, root: Path | None = None) -> tuple[NormalizedF
 def parse_bandit_json(payload: str, root: Path | None = None) -> tuple[NormalizedFinding, ...]:
     values = json.loads(payload).get("results", [])
     severity_map = {"LOW": "info", "MEDIUM": "warning", "HIGH": "error"}
-    return tuple(
-        NormalizedFinding(
-            analyzer="python.bandit",
-            rule_id=str(value["test_id"]),
-            severity=severity_map.get(str(value["issue_severity"]).upper(), "warning"),
-            category="security",
-            title=str(value["test_id"]),
-            description=str(value["issue_text"]),
-            path=_path(str(value["filename"]), root)
+    findings: list[NormalizedFinding] = []
+    for value in values:
+        path = (
+            _path(str(value["filename"]), root)
             if root
-            else Path(str(value["filename"])).as_posix(),
-            start_line=int(value["line_number"]),
-            end_line=int(value.get("line_range", [value["line_number"]])[-1]),
+            else Path(str(value["filename"])).as_posix()
         )
-        for value in values
-    )
+        rule_id = str(value["test_id"])
+        if rule_id == "B101" and _is_pytest_path(path):
+            continue
+        findings.append(
+            NormalizedFinding(
+                analyzer="python.bandit",
+                rule_id=rule_id,
+                severity=severity_map.get(str(value["issue_severity"]).upper(), "warning"),
+                category="security",
+                title=rule_id,
+                description=str(value["issue_text"]),
+                path=path,
+                start_line=int(value["line_number"]),
+                end_line=int(value.get("line_range", [value["line_number"]])[-1]),
+            )
+        )
+    return tuple(findings)
+
+
+def _is_pytest_path(path: str) -> bool:
+    normalized = path.replace("\\", "/")
+    return normalized.startswith(("backend/tests/", "tests/")) and normalized.endswith(".py")
 
 
 def parse_radon_cc_json(

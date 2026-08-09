@@ -1,4 +1,3 @@
-# ruff: noqa: E501
 """Persistence boundary for Prompt 05 analysis state and findings."""
 
 from __future__ import annotations
