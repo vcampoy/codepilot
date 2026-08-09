@@ -3,7 +3,13 @@ export type AnalysisStatus = 'queued' | 'running' | 'completed' | 'failed'
 export interface AnalysisAccepted {
   analysis_id: string
   status: AnalysisStatus
+  project_id?: string | null
 }
+
+export interface Project { project_id: string; name: string; repository_url: string; created_at: string; updated_at: string }
+export interface ProjectListResponse { items: Project[]; total: number; limit: number; offset: number }
+export interface AnalysisRun { analysis_id: string; project_id: string | null; status: AnalysisStatus; repository_url: string; created_at: string; failure_message: string | null }
+export interface AnalysisRunListResponse { items: AnalysisRun[]; total: number; limit: number; offset: number }
 
 export interface AnalysisStatusResponse {
   analysis_id: string
@@ -113,6 +119,14 @@ export function getAnalysisSummary(id: string): Promise<AnalysisSummaryResponse>
 
 export function getAnalyzerAvailability(): Promise<AnalyzerAvailability[]> {
   return request<AnalyzerAvailability[]>('/api/v1/analyses/analyzers/availability')
+}
+
+export function getProjects(limit = 20, offset = 0): Promise<ProjectListResponse> {
+  return request<ProjectListResponse>(`/api/v1/projects?limit=${limit}&offset=${offset}`)
+}
+
+export function getProjectAnalyses(projectId: string, limit = 20, offset = 0): Promise<AnalysisRunListResponse> {
+  return request<AnalysisRunListResponse>(`/api/v1/projects/${encodeURIComponent(projectId)}/analyses?limit=${limit}&offset=${offset}`)
 }
 
 export function getAnalysisFindings(id: string, init?: RequestInit): Promise<AnalysisFinding[]> {

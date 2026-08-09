@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import Sequence
+from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from typing import Any, Protocol, cast
 from uuid import UUID, uuid4
@@ -23,6 +24,7 @@ from sqlalchemy import (
     UniqueConstraint,
     Uuid,
     and_,
+    func,
     insert,
     or_,
     select,
@@ -47,6 +49,7 @@ from codepilot.domain.analysis import (
     AnalysisSummary,
     AnalyzerOutcome,
     InvalidAnalysisTransitionError,
+    ProjectRecord,
     SourceContext,
     SourceLine,
     fingerprint_finding,
@@ -60,6 +63,18 @@ class AnalysisRepository(Protocol):
     async def create(
         self, repository_url: str, workspace_id: str = "default"
     ) -> AnalysisRecord: ...
+
+    async def get_or_create_project(
+        self, repository_url: str, workspace_id: str
+    ) -> ProjectRecord: ...
+
+    async def list_projects(
+        self, workspace_id: str, *, limit: int, offset: int
+    ) -> tuple[tuple[ProjectRecord, ...], int]: ...
+
+    async def list_project_analyses(
+        self, project_id: UUID, workspace_id: str, *, limit: int, offset: int
+    ) -> tuple[tuple[AnalysisRecord, ...], int]: ...
 
     async def get(
         self, analysis_id: UUID, workspace_id: str | None = None
@@ -160,16 +175,94 @@ class InMemoryAnalysisRepository:
         self._findings: dict[UUID, dict[str, AnalysisFinding]] = {}
         self._file_insights: dict[UUID, tuple[FileInsight, ...]] = {}
         self._lock = asyncio.Lock()
+        self._projects: dict[UUID, ProjectRecord] = {}
+        self._project_keys: dict[tuple[str, str], UUID] = {}
+
+    async def get_or_create_project(self, repository_url: str, workspace_id: str) -> ProjectRecord:
+        key = (workspace_id, normalize_repository_url(repository_url))
+        async with self._lock:
+            existing = self._project_keys.get(key)
+            if existing is not None:
+                project = replace(self._projects[existing], updated_at=_utc_now())
+                self._projects[existing] = project
+                return project
+            now = _utc_now()
+            project = ProjectRecord(
+                uuid4(),
+                workspace_id,
+                repository_url,
+                key[1],
+                repository_url.rstrip("/").split("/")[-1].removesuffix(".git") or repository_url,
+                now,
+                now,
+            )
+            self._projects[project.project_id] = project
+            self._project_keys[key] = project.project_id
+            return project
+
+    async def list_projects(
+        self, workspace_id: str, *, limit: int, offset: int
+    ) -> tuple[tuple[ProjectRecord, ...], int]:
+        async with self._lock:
+            projects = sorted(
+                (p for p in self._projects.values() if p.workspace_id == workspace_id),
+                key=lambda item: item.updated_at,
+                reverse=True,
+            )
+            return tuple(projects[offset : offset + limit]), len(projects)
+
+    async def list_project_analyses(
+        self, project_id: UUID, workspace_id: str, *, limit: int, offset: int
+    ) -> tuple[tuple[AnalysisRecord, ...], int]:
+        async with self._lock:
+            records = sorted(
+                (
+                    r
+                    for r in self._records.values()
+                    if r.project_id == project_id and r.workspace_id == workspace_id
+                ),
+                key=lambda item: item.created_at,
+                reverse=True,
+            )
+            return tuple(_copy_record(r) for r in records[offset : offset + limit]), len(records)
 
     async def create(self, repository_url: str, workspace_id: str = "default") -> AnalysisRecord:
         async with self._lock:
+            project = await self._get_or_create_project_locked(repository_url, workspace_id)
             record = AnalysisRecord(
-                uuid4(), repository_url, workspace_id=workspace_id, created_at=_utc_now()
+                uuid4(),
+                repository_url,
+                workspace_id=workspace_id,
+                project_id=project.project_id,
+                created_at=_utc_now(),
             )
             self._records[record.analysis_id] = record
             self._findings[record.analysis_id] = {}
             self._file_insights[record.analysis_id] = ()
             return _copy_record(record)
+
+    async def _get_or_create_project_locked(
+        self, repository_url: str, workspace_id: str
+    ) -> ProjectRecord:
+        key = (workspace_id, normalize_repository_url(repository_url))
+        existing = self._project_keys.get(key)
+        if existing is not None:
+            project = replace(self._projects[existing], updated_at=_utc_now())
+            self._projects[existing] = project
+            return project
+        now = _utc_now()
+        project = ProjectRecord(
+            uuid4(),
+            workspace_id,
+            repository_url,
+            key[1],
+            repository_url.rstrip("/").split("/")[-1].removesuffix(".git") or repository_url,
+            now,
+            now,
+        )
+        self._projects[project.project_id] = project
+        self._project_keys[key] = project.project_id
+        return project
 
     async def get(
         self, analysis_id: UUID, workspace_id: str | None = None
@@ -437,6 +530,7 @@ def _copy_record(record: AnalysisRecord) -> AnalysisRecord:
         analysis_id=record.analysis_id,
         repository_url=record.repository_url,
         workspace_id=record.workspace_id,
+        project_id=record.project_id,
         status=record.status,
         commit_sha=record.commit_sha,
         summary=record.summary,
@@ -453,6 +547,11 @@ def _utc_now() -> datetime:
     return datetime.now(UTC)
 
 
+def normalize_repository_url(repository_url: str) -> str:
+    """Normalize repository identity while preserving the original URL for display."""
+    return repository_url.strip().lower().rstrip("/").removesuffix(".git")
+
+
 _METADATA = MetaData()
 _ANALYSES = Table(
     "codepilot_analyses",
@@ -462,6 +561,7 @@ _ANALYSES = Table(
     Column("analysis_id", Uuid(as_uuid=True), primary_key=True),
     Column("repository_url", String(2048), nullable=False),
     Column("workspace_id", String(64), nullable=False, default="default"),
+    Column("project_id", Uuid(as_uuid=True), ForeignKey("codepilot_projects.project_id")),
     Column("created_at", DateTime(timezone=True), nullable=False),
     Column("status", String(16), nullable=False),
     Column("commit_sha", String(64)),
@@ -497,6 +597,18 @@ _FINDINGS = Table(
     Column("source_context", JSON),
     UniqueConstraint("analysis_id", "fingerprint", name="uq_analysis_finding_fingerprint"),
 )
+_PROJECTS = Table(
+    "codepilot_projects",
+    _METADATA,
+    Column("project_id", Uuid(as_uuid=True), primary_key=True),
+    Column("workspace_id", String(64), nullable=False),
+    Column("repository_url", String(2048), nullable=False),
+    Column("repository_key", String(2048), nullable=False),
+    Column("name", String(512), nullable=False),
+    Column("created_at", DateTime(timezone=True), nullable=False),
+    Column("updated_at", DateTime(timezone=True), nullable=False),
+    UniqueConstraint("workspace_id", "repository_key", name="uq_codepilot_project_identity"),
+)
 _FILE_INSIGHTS = Table(
     "codepilot_analysis_file_insights",
     _METADATA,
@@ -524,9 +636,91 @@ class PostgresAnalysisRepository:
     def __init__(self, database_url: str, engine: AsyncEngine | None = None) -> None:
         self._engine = engine or create_async_engine(database_url, pool_pre_ping=True)
 
+    async def get_or_create_project(self, repository_url: str, workspace_id: str) -> ProjectRecord:
+        key = normalize_repository_url(repository_url)
+        now = _utc_now()
+        name = repository_url.rstrip("/").split("/")[-1].removesuffix(".git") or repository_url
+        async with self._engine.begin() as connection:
+            project_id = uuid4()
+            statement = (
+                postgresql_insert(_PROJECTS)
+                .values(
+                    project_id=project_id,
+                    workspace_id=workspace_id,
+                    repository_url=repository_url,
+                    repository_key=key,
+                    name=name,
+                    created_at=now,
+                    updated_at=now,
+                )
+                .on_conflict_do_update(
+                    index_elements=[_PROJECTS.c.workspace_id, _PROJECTS.c.repository_key],
+                    set_={"repository_url": repository_url, "name": name, "updated_at": now},
+                )
+                .returning(*_PROJECTS.c)
+            )
+            row = (await connection.execute(statement)).mappings().one()
+        return _project_from_row(row)
+
+    async def list_projects(
+        self, workspace_id: str, *, limit: int, offset: int
+    ) -> tuple[tuple[ProjectRecord, ...], int]:
+        async with self._engine.connect() as connection:
+            count = int(
+                (
+                    await connection.execute(
+                        select(func.count())
+                        .select_from(_PROJECTS)
+                        .where(_PROJECTS.c.workspace_id == workspace_id)
+                    )
+                ).scalar_one()
+            )
+            result = await connection.execute(
+                select(_PROJECTS)
+                .where(_PROJECTS.c.workspace_id == workspace_id)
+                .order_by(_PROJECTS.c.updated_at.desc())
+                .offset(offset)
+                .limit(limit)
+            )
+            rows = result.mappings().all()
+        return tuple(_project_from_row(row) for row in rows), count
+
+    async def list_project_analyses(
+        self, project_id: UUID, workspace_id: str, *, limit: int, offset: int
+    ) -> tuple[tuple[AnalysisRecord, ...], int]:
+        async with self._engine.connect() as connection:
+            result = await connection.execute(
+                select(_ANALYSES)
+                .where(
+                    _ANALYSES.c.project_id == project_id, _ANALYSES.c.workspace_id == workspace_id
+                )
+                .order_by(_ANALYSES.c.created_at.desc())
+                .offset(offset)
+                .limit(limit)
+            )
+            rows = result.mappings().all()
+            count = int(
+                (
+                    await connection.execute(
+                        select(func.count())
+                        .select_from(_ANALYSES)
+                        .where(
+                            _ANALYSES.c.project_id == project_id,
+                            _ANALYSES.c.workspace_id == workspace_id,
+                        )
+                    )
+                ).scalar_one()
+            )
+        return tuple(_record_from_row(row) for row in rows), count
+
     async def create(self, repository_url: str, workspace_id: str = "default") -> AnalysisRecord:
+        project = await self.get_or_create_project(repository_url, workspace_id)
         record = AnalysisRecord(
-            uuid4(), repository_url, workspace_id=workspace_id, created_at=_utc_now()
+            uuid4(),
+            repository_url,
+            workspace_id=workspace_id,
+            project_id=project.project_id,
+            created_at=_utc_now(),
         )
         async with self._engine.begin() as connection:
             await connection.execute(
@@ -534,6 +728,7 @@ class PostgresAnalysisRepository:
                     analysis_id=record.analysis_id,
                     repository_url=record.repository_url,
                     workspace_id=record.workspace_id,
+                    project_id=record.project_id,
                     created_at=record.created_at,
                     status=record.status.value,
                     retryable=False,
@@ -977,6 +1172,7 @@ def _record_from_row(row: Any) -> AnalysisRecord:
         analysis_id=cast(UUID, row["analysis_id"]),
         repository_url=cast(str, row["repository_url"]),
         workspace_id=cast(str, row["workspace_id"]),
+        project_id=cast(UUID | None, row.get("project_id")),
         status=AnalysisStatus(cast(str, row["status"])),
         commit_sha=cast(str | None, row["commit_sha"]),
         summary=_summary_from_json(summary),
@@ -1003,6 +1199,18 @@ def _finding_from_row(row: Any) -> AnalysisFinding:
         evidence=cast(str | None, row.get("evidence")),
         remediation=cast(str | None, row.get("remediation")),
         source_context=_source_context_from_json(row.get("source_context")),
+    )
+
+
+def _project_from_row(row: Any) -> ProjectRecord:
+    return ProjectRecord(
+        project_id=cast(UUID, row["project_id"]),
+        workspace_id=cast(str, row["workspace_id"]),
+        repository_url=cast(str, row["repository_url"]),
+        repository_key=cast(str, row["repository_key"]),
+        name=cast(str, row["name"]),
+        created_at=cast(datetime, row["created_at"]),
+        updated_at=cast(datetime, row["updated_at"]),
     )
 
 
@@ -1183,9 +1391,7 @@ def _summary_from_json(value: Any) -> AnalysisSummary | None:
             else None
         ),
         baseline_analysis_id=(
-            UUID(str(value["baseline_analysis_id"]))
-            if value.get("baseline_analysis_id")
-            else None
+            UUID(str(value["baseline_analysis_id"])) if value.get("baseline_analysis_id") else None
         ),
         file_insights=tuple(
             FileInsight(
@@ -1193,8 +1399,7 @@ def _summary_from_json(value: Any) -> AnalysisSummary | None:
                 hotspot_score=float(item["hotspot_score"]),
                 risk=_risk_from_json(item.get("risk")),
                 metrics={
-                    str(key): float(metric)
-                    for key, metric in dict(item.get("metrics", {})).items()
+                    str(key): float(metric) for key, metric in dict(item.get("metrics", {})).items()
                 },
             )
             for item in value.get("file_insights", [])

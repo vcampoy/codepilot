@@ -25,6 +25,8 @@ const fixtures = vi.hoisted(() => ({
   getAnalysisHotspots: vi.fn(),
   getAnalysisFiles: vi.fn(),
   getAnalysisFileDetail: vi.fn(),
+  getProjects: vi.fn().mockResolvedValue({ items: [] }),
+  getProjectAnalyses: vi.fn(),
   requestEnrichment: vi.fn(),
   downloadMarkdownFile: vi.fn(),
 }))
@@ -104,6 +106,7 @@ function configureCompletedRun() {
 beforeEach(() => {
   window.location.hash = ''
   Object.values(fixtures).forEach((mock) => mock.mockReset())
+  fixtures.getProjects.mockResolvedValue({ items: [] })
 })
 
 afterEach(() => cleanup())

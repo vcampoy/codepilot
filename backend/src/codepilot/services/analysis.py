@@ -22,6 +22,7 @@ from codepilot.domain.analysis import (
     AnalysisStatus,
     AnalysisSummary,
     InvalidAnalysisTransitionError,
+    ProjectRecord,
     fingerprint_finding,
 )
 from codepilot.domain.insights import calculate_repository_risk, select_hotspots
@@ -171,6 +172,18 @@ class AnalysisService:
         await self.get_analysis(analysis_id, workspace_id)
         return await self._repository.get_findings(analysis_id)
 
+    async def list_projects(
+        self, workspace_id: str, *, limit: int, offset: int
+    ) -> tuple[tuple[ProjectRecord, ...], int]:
+        return await self._repository.list_projects(workspace_id, limit=limit, offset=offset)
+
+    async def list_project_analyses(
+        self, project_id: UUID, workspace_id: str, *, limit: int, offset: int
+    ) -> tuple[tuple[AnalysisRecord, ...], int]:
+        return await self._repository.list_project_analyses(
+            project_id, workspace_id, limit=limit, offset=offset
+        )
+
     async def recover_stale_analyses(self, *, now: datetime | None = None) -> int:
         """Reclaim crashed work and republish old queued identifiers."""
         current = now or datetime.now(UTC)
@@ -278,10 +291,7 @@ class AnalysisService:
                     baseline_analysis_id=baseline.analysis_id if baseline else None,
                     baseline_findings=baseline_findings,
                     baseline_hotspot_paths=(
-                        tuple(
-                            item.path
-                            for item in select_hotspots(baseline.summary.file_insights)
-                        )
+                        tuple(item.path for item in select_hotspots(baseline.summary.file_insights))
                         if baseline and baseline.summary
                         else ()
                     ),

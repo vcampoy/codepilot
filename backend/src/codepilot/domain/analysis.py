@@ -25,6 +25,17 @@ class AnalysisStatus(StrEnum):
     FAILED = "failed"
 
 
+@dataclass(frozen=True, slots=True)
+class ProjectRecord:
+    project_id: UUID
+    workspace_id: str
+    repository_url: str
+    repository_key: str
+    name: str
+    created_at: datetime
+    updated_at: datetime
+
+
 class InvalidAnalysisTransitionError(Exception):
     """The analysis lifecycle transition is not allowed."""
 
@@ -139,6 +150,7 @@ class AnalysisRecord:
     analysis_id: UUID
     repository_url: str
     workspace_id: str = "default"
+    project_id: UUID | None = None
     status: AnalysisStatus = AnalysisStatus.QUEUED
     commit_sha: str | None = None
     summary: AnalysisSummary | None = None

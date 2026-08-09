@@ -43,6 +43,7 @@ class AnalysisAcceptedResponse(BaseModel):
 
     analysis_id: UUID
     status: str
+    project_id: UUID | None = None
 
 
 class AnalysisStatusResponse(BaseModel):
@@ -147,6 +148,7 @@ async def request_analysis(payload: AnalysisRequest, request: Request) -> Analys
     return AnalysisAcceptedResponse(
         analysis_id=record.analysis_id,
         status=record.status.value,
+        project_id=record.project_id,
     )
 
 
@@ -263,9 +265,7 @@ async def analysis_summary(analysis_id: UUID, request: Request) -> AnalysisSumma
     )
 
 
-@router.get(
-    "/{analysis_id}/hotspots", response_model=list[FileInsightResponse]
-)
+@router.get("/{analysis_id}/hotspots", response_model=list[FileInsightResponse])
 async def analysis_hotspots(
     analysis_id: UUID,
     request: Request,

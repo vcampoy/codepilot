@@ -9,6 +9,8 @@ import {
   getAnalysisFileDetail,
   getAnalysisHotspots,
   getAnalysisFiles,
+  getProjects,
+  getProjectAnalyses,
   requestEnrichment,
   type AnalysisStatus,
   type AnalysisSummaryResponse,
@@ -16,6 +18,8 @@ import {
   type FileDetail,
   type FileInsight,
   type EnrichmentResponse,
+  type Project,
+  type AnalysisRun,
 } from './api'
 import { createFindingsMarkdownExport, downloadMarkdownFile } from './findingsExport'
 import { createHotspotsMarkdownExport, MAX_HOTSPOTS_EXPORT } from './hotspotsExport'
@@ -78,11 +82,28 @@ function App() {
   const [filesError, setFilesError] = useState<string | null>(null)
   const [resultsBusy, setResultsBusy] = useState(false)
   const [selectedFilePath, setSelectedFilePath] = useState<string | null>(null)
+  const [projects, setProjects] = useState<Project[]>([])
+  const [projectRuns, setProjectRuns] = useState<Record<string, AnalysisRun[]>>({})
   const [fileDetail, setFileDetail] = useState<FileDetail | null>(null)
   const [fileDetailBusy, setFileDetailBusy] = useState(false)
   const [fileDetailError, setFileDetailError] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
+
+  const refreshHistory = async () => {
+    try {
+      const response = await getProjects()
+      setProjects(response.items)
+      const entries = await Promise.all(response.items.map(async (project) => [project.project_id, (await getProjectAnalyses(project.project_id)).items] as const))
+      setProjectRuns(Object.fromEntries(entries))
+    } catch {
+      // History remains optional; the active analysis remains usable.
+    }
+  }
+
+  useEffect(() => {
+    void refreshHistory()
+  }, [])
 
   useEffect(() => {
     const onHashChange = () => setView(viewFromHash())
@@ -192,6 +213,7 @@ function App() {
     try {
       const submittedRepositoryUrl = repositoryUrl.trim()
       const accepted = await createAnalysis(submittedRepositoryUrl)
+      void refreshHistory()
       setAnalyzedRepositoryUrl(submittedRepositoryUrl)
       setAnalysisId(accepted.analysis_id)
       setStatus(accepted.status)
@@ -281,7 +303,19 @@ function App() {
           </section>
         )}
 
-        {activeView === 'analyses' && <HistoryView analysisId={analysisId} status={status} />}
+        {activeView === 'analyses' && <HistoryView analysisId={analysisId} status={status} projects={projects} projectRuns={projectRuns} onSelectRun={(run) => {
+          setAnalysisId(run.analysis_id)
+          setAnalyzedRepositoryUrl(run.repository_url)
+          setStatus(run.status)
+          setError(run.failure_message)
+          setSummary(null)
+          setFindings([])
+          setHotspots([])
+          setFileInsights([])
+          setSelectedFilePath(null)
+          void getAnalysisSummary(run.analysis_id).then((result) => setSummary(result.summary)).catch(() => undefined)
+          navigate('overview')
+        }} />}
         {activeView === 'overview' && <OverviewView analysisId={analysisId} status={status} summary={summary} />}
         {activeView === 'findings' && <FindingsView findings={findings} status={status} summary={summary} error={error || findingsError} repositoryUrl={analyzedRepositoryUrl} analysisId={analysisId} onSelectPath={(path) => { setSelectedFilePath(path); navigate('files') }} />}
         {activeView === 'hotspots' && <HotspotsView hotspots={hotspots} status={status} error={hotspotsError} repositoryUrl={analyzedRepositoryUrl} analysisId={analysisId} onSelectPath={(path) => { setSelectedFilePath(path); navigate('files') }} />}
@@ -484,8 +518,9 @@ function OverviewView({ analysisId, status, summary }: { analysisId: string | nu
   return <section className="page-grid"><div className="section-heading"><div><p className="kicker">Analysis overview</p><h2>{analysisId ? `Run ${analysisId.slice(0, 8)}` : 'No active analysis'}</h2></div><span className={`status-badge status-${status}`}>{status || 'idle'}</span></div><div className="metric-grid">{cards.map(([label, value, note]) => <article className="metric-card" key={label}><span>{label}</span><strong>{value}</strong><small>{note}</small></article>)}</div><div className="panel"><div className="panel-title"><span>Findings by severity</span><span className="muted">Reported by the API</span></div>{summary ? Object.entries(summary.finding_count_by_severity).map(([severity, count]) => <div className="availability-row" key={severity}><span>{severity}</span><strong>{count}</strong></div>) : <EmptyState title="Severity data pending" description="Completed analyzer output will populate this breakdown." compact />}</div><div className="panel"><div className="panel-title"><span>Analyzer outcomes</span><span className="muted">Worker evidence</span></div>{summary?.analyzer_outcomes?.length ? summary.analyzer_outcomes.map((item) => <div className="availability-row" key={item.analyzer}><span>{item.analyzer}</span><span className={`availability-${item.status}`}>{item.status}</span><small>{item.tool}</small></div>) : <EmptyState title="Analyzer evidence pending" description="Completed analyzer output will populate this list." compact />}</div><div className="panel"><div className="panel-title"><span>Optional AI explanation</span><span className="muted">Always grounded in stored evidence</span></div><button className="secondary-button" disabled={!summary || enrichmentBusy} onClick={() => void explain()} type="button">{enrichmentBusy ? 'Generating...' : 'Explain deterministic summary'}</button>{enrichmentError && <p className="error-copy" role="alert">{enrichmentError}</p>}{enrichment && <div className="ai-result"><strong>{enrichment.ai_generated ? 'AI-generated explanation' : 'AI enrichment disabled'}</strong>{enrichment.text && <p>{enrichment.text}</p>}{enrichment.citations.length > 0 && <small>Citations: {enrichment.citations.join(', ')}</small>}</div>}</div></section>
 }
 
-function HistoryView({ analysisId, status }: { analysisId: string | null; status: AnalysisStatus | null }) {
-  return <section className="page-grid"><div className="panel table-panel"><div className="panel-title"><span>Analysis history</span><span className="muted">Latest first</span></div>{analysisId ? <div className="history-row"><code>{analysisId}</code><span className={`status-badge status-${status}`}>{status}</span><button type="button" onClick={() => { window.location.hash = 'overview' }}>Open overview</button></div> : <EmptyState title="No analyses" description="Submit a repository to create your first analysis run." compact />}</div></section>
+function HistoryView({ analysisId, status, projects, projectRuns, onSelectRun }: { analysisId: string | null; status: AnalysisStatus | null; projects: Project[]; projectRuns: Record<string, AnalysisRun[]>; onSelectRun: (run: AnalysisRun) => void }) {
+  const runs = Object.values(projectRuns).flat()
+  return <section className="page-grid"><div className="panel table-panel"><div className="panel-title"><span>Analysis history</span><span className="muted">Latest first</span></div>{runs.length ? runs.sort((left, right) => right.created_at.localeCompare(left.created_at)).map((run) => <div className="history-row" key={run.analysis_id}><span><strong>{projects.find((project) => project.project_id === run.project_id)?.name || run.repository_url}</strong><br /><code>{run.analysis_id}</code></span><span className={`status-badge status-${run.status}`}>{run.status}</span><button type="button" onClick={() => onSelectRun(run)}>Open overview</button></div>) : analysisId ? <div className="history-row"><code>{analysisId}</code><span className={`status-badge status-${status}`}>{status}</span></div> : <EmptyState title="No analyses" description="Submit a repository to create your first analysis run." compact />}</div></section>
 }
 
 function HotspotsView({ hotspots, status, error, repositoryUrl, analysisId, onSelectPath }: { hotspots: FileInsight[]; status: AnalysisStatus | null; error: string | null; repositoryUrl: string | null; analysisId: string | null; onSelectPath: (path: string) => void }) {
