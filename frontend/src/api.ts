@@ -89,6 +89,13 @@ export interface EnrichmentResponse {
   cache_hit: boolean
 }
 
+export interface LlmConfiguration {
+  enabled: boolean
+  provider: string
+  model: string
+  api_key_configured: boolean
+}
+
 const configuredBaseUrl = import.meta.env.VITE_API_BASE_URL?.trim()
 const apiBaseUrl = (configuredBaseUrl || 'http://localhost:8000').replace(/\/+$/, '')
 
@@ -176,6 +183,14 @@ export function requestEnrichment(id: string, task: EnrichmentTask, path?: strin
     `/api/v1/analyses/${encodeURIComponent(id)}/enrichment/${task}${query}`,
     { method: 'POST' },
   )
+}
+
+export function getLlmConfiguration(): Promise<LlmConfiguration> {
+  return request<LlmConfiguration>('/api/v1/settings/llm')
+}
+
+export function saveLlmConfiguration(payload: { enabled: boolean; provider: string; model: string; api_key?: string }): Promise<LlmConfiguration> {
+  return request<LlmConfiguration>('/api/v1/settings/llm', { method: 'PUT', body: JSON.stringify(payload) })
 }
 
 export const apiDocsUrl = `${apiBaseUrl}/docs`

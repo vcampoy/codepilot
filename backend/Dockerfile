@@ -14,7 +14,7 @@ COPY alembic.ini ./
 COPY alembic ./alembic
 COPY src ./src
 
-RUN pip install --no-cache-dir .
+RUN pip install --no-cache-dir ".[llm]"
 
 FROM base AS api
 

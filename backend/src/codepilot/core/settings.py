@@ -51,6 +51,7 @@ class Settings(BaseSettings):
     llm_model_refactoring_plan: str | None = None
     llm_model_deterministic_summary: str | None = None
     llm_api_key: SecretStr | None = None
+    llm_config_encryption_key: SecretStr | None = None
     llm_fallback_models: Annotated[list[str], NoDecode] = []
     llm_timeout_seconds: Annotated[float, Field(gt=0, le=300)] = 30
     llm_max_tokens: Annotated[int, Field(gt=0, le=8_192)] = 1_200
@@ -192,6 +193,13 @@ class Settings(BaseSettings):
 
     def llm_api_key_value(self) -> str | None:
         return self.llm_api_key.get_secret_value() if self.llm_api_key else None
+
+    def llm_config_encryption_key_value(self) -> str | None:
+        return (
+            self.llm_config_encryption_key.get_secret_value()
+            if self.llm_config_encryption_key
+            else None
+        )
 
     def github_private_key_value(self) -> str | None:
         return self.github_private_key.get_secret_value() if self.github_private_key else None

@@ -186,8 +186,15 @@ async def analysis_enrichment(
 ) -> EnrichmentResult:
     record = await _get_record(request, analysis_id)
     service = cast(LlmEnrichmentService, request.app.state.llm_enrichment_service)
+    identity = authenticate(request)
+    configuration_service = getattr(request.app.state, "llm_configuration_service", None)
     try:
-        return await service.enrich_analysis(record, task, path)
+        gateway = (
+            await configuration_service.gateway(identity.workspace_id)
+            if configuration_service is not None
+            else None
+        )
+        return await service.enrich_analysis(record, task, path, gateway=gateway)
     except AnalysisNotReadyForEnrichmentError as error:
         raise ApplicationError(
             "analysis_not_ready",
@@ -195,6 +202,12 @@ async def analysis_enrichment(
             status_code=409,
         ) from error
     except LlmError as error:
+        raise ApplicationError(
+            "llm_enrichment_unavailable",
+            "AI enrichment is unavailable; deterministic analysis remains available.",
+            status_code=503,
+        ) from error
+    except RuntimeError as error:
         raise ApplicationError(
             "llm_enrichment_unavailable",
             "AI enrichment is unavailable; deterministic analysis remains available.",

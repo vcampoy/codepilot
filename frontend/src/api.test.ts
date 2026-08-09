@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { createAnalysis, getAnalysisFileDetail, getAnalysisFiles, getAnalysisFindings, getAnalysisHotspots, getAnalysisStatus, getAnalysisSummary } from './api'
+import { createAnalysis, getAnalysisFileDetail, getAnalysisFiles, getAnalysisFindings, getAnalysisHotspots, getAnalysisStatus, getAnalysisSummary, getLlmConfiguration, saveLlmConfiguration } from './api'
 
 afterEach(() => {
   vi.unstubAllGlobals()
@@ -116,5 +116,14 @@ describe('analysis API client', () => {
       'http://localhost:8000/api/v1/analyses/analysis-1/files?limit=100&offset=0',
       expect.any(Object),
     )
+  })
+
+  it('saves and reads secret-safe LLM configuration', async () => {
+    const fetchMock = vi.fn().mockImplementation(() => new Response(JSON.stringify({ enabled: true, provider: 'openai', model: 'gpt-test', api_key_configured: true }), { status: 200 }))
+    vi.stubGlobal('fetch', fetchMock)
+    await expect(saveLlmConfiguration({ enabled: true, provider: 'openai', model: 'gpt-test', api_key: 'sk-test' })).resolves.toMatchObject({ api_key_configured: true })
+    await expect(getLlmConfiguration()).resolves.toMatchObject({ provider: 'openai' })
+    expect(fetchMock.mock.calls[0][0]).toBe('http://localhost:8000/api/v1/settings/llm')
+    expect(fetchMock.mock.calls[0][1]).toMatchObject({ method: 'PUT' })
   })
 })

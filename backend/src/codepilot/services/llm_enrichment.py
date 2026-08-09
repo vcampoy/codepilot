@@ -40,7 +40,11 @@ class LlmEnrichmentService:
         self._repository = repository
 
     async def enrich_analysis(
-        self, record: AnalysisRecord, task: EnrichmentTask, file_path: str | None = None
+        self,
+        record: AnalysisRecord,
+        task: EnrichmentTask,
+        file_path: str | None = None,
+        gateway: LlmGateway | None = None,
     ) -> EnrichmentResult:
         if record.summary is None:
             raise AnalysisNotReadyForEnrichmentError
@@ -78,7 +82,7 @@ class LlmEnrichmentService:
                 "finding_count": total_findings,
             },
         )
-        return await self._gateway.enrich(task, evidence)
+        return await (gateway or self._gateway).enrich(task, evidence)
 
 
 class AnalysisNotReadyForEnrichmentError(Exception):

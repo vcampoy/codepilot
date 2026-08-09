@@ -30,6 +30,8 @@ const fixtures = vi.hoisted(() => ({
   getQualityPolicy: vi.fn(),
   saveQualityPolicy: vi.fn(),
   importQualityProfile: vi.fn(),
+  getLlmConfiguration: vi.fn(),
+  saveLlmConfiguration: vi.fn(),
   requestEnrichment: vi.fn(),
   downloadMarkdownFile: vi.fn(),
 }))
@@ -110,6 +112,7 @@ beforeEach(() => {
   window.location.hash = ''
   Object.values(fixtures).forEach((mock) => mock.mockReset())
   fixtures.getProjects.mockResolvedValue({ items: [] })
+  fixtures.getLlmConfiguration.mockResolvedValue({ enabled: false, provider: 'openai', model: 'gpt-4o-mini', api_key_configured: false })
 })
 
 afterEach(() => cleanup())

@@ -34,6 +34,7 @@ from codepilot.llm.contracts import EnrichmentTask, NoOpLlmGateway
 from codepilot.llm.gateway import LiteLlmGateway
 from codepilot.repositories.analysis import PostgresAnalysisRepository
 from codepilot.services.analysis import AnalysisService, NoopAnalyzer
+from codepilot.services.llm_configuration import LlmConfigurationService
 from codepilot.services.llm_enrichment import LlmEnrichmentService, LlmGateway
 from codepilot.services.repository_ingestion import (
     IngestionLimits,
@@ -108,6 +109,9 @@ def create_app(
     resolved_llm_gateway = llm_gateway or _build_llm_gateway(resolved_settings)
     application.state.llm_enrichment_service = LlmEnrichmentService(
         resolved_llm_gateway, analysis_repository
+    )
+    application.state.llm_configuration_service = LlmConfigurationService(
+        analysis_repository, resolved_settings.llm_config_encryption_key_value()
     )
     application.state.github_webhook_service = github_webhook_service or (
         _build_github_webhook_service(resolved_settings)

@@ -14,6 +14,8 @@ import {
   saveQualityPolicy,
   getQualityPolicy,
   importQualityProfile,
+  getLlmConfiguration,
+  saveLlmConfiguration,
   requestEnrichment,
   type AnalysisStatus,
   type AnalysisSummaryResponse,
@@ -23,6 +25,7 @@ import {
   type EnrichmentResponse,
   type Project,
   type AnalysisRun,
+  type LlmConfiguration,
 } from './api'
 import { createFindingsMarkdownExport, downloadMarkdownFile } from './findingsExport'
 import { createHotspotsMarkdownExport, MAX_HOTSPOTS_EXPORT } from './hotspotsExport'
@@ -584,6 +587,20 @@ function QualityGateView({ summary, projectId, onNavigate }: { summary: Analysis
   const [maxHotspots, setMaxHotspots] = useState(gate.thresholds.max_new_hotspots?.toString() ?? '')
   const [profiles, setProfiles] = useState(summary?.quality_policy?.profiles ?? [])
   const [importMessage, setImportMessage] = useState<string | null>(null)
+  const [llm, setLlm] = useState<LlmConfiguration | null>(null)
+  const [llmProvider, setLlmProvider] = useState('openai')
+  const [llmModel, setLlmModel] = useState('gpt-4o-mini')
+  const [llmKey, setLlmKey] = useState('')
+  const [llmEnabled, setLlmEnabled] = useState(false)
+  const [llmMessage, setLlmMessage] = useState<string | null>(null)
+  useEffect(() => {
+    void getLlmConfiguration().then((configuration) => {
+      setLlm(configuration)
+      setLlmProvider(configuration.provider)
+      setLlmModel(configuration.model)
+      setLlmEnabled(configuration.enabled)
+    }).catch(() => undefined)
+  }, [])
   useEffect(() => {
     if (!projectId) return
     void getQualityPolicy(projectId).then((policy) => {
@@ -603,7 +620,16 @@ function QualityGateView({ summary, projectId, onNavigate }: { summary: Analysis
     if (!projectId) return
     try { const report = await importQualityProfile(projectId, await file.text()); setImportMessage(`Imported ${report.mapped} rules; ${report.unsupported.length} unsupported.`); const policy = await getQualityPolicy(projectId); setProfiles(policy.profiles) } catch (error) { setImportMessage(error instanceof Error ? error.message : 'Import failed.') }
   }
-  return <section className="page-grid"><div className="panel"><div className="panel-title"><span>Quality gate</span><span className={`status-badge status-${gate.status === 'failed' ? 'failed' : 'completed'}`}>{gate.status === 'not_configured' ? 'not configured' : gate.passed ? 'passed' : 'failed'}</span></div>{projectId && <form className="quality-policy-form" onSubmit={(event) => { event.preventDefault(); void save() }}><label htmlFor="max-critical">Maximum new critical findings</label><input id="max-critical" type="number" min="0" value={maxCritical} onChange={(event) => setMaxCritical(event.target.value)} /><label htmlFor="max-risk-score">Maximum risk score</label><input id="max-risk-score" type="number" min="0" max="1" step="0.01" value={maxRisk} onChange={(event) => setMaxRisk(event.target.value)} /><label htmlFor="max-hotspots">Maximum new hotspots</label><input id="max-hotspots" type="number" min="0" value={maxHotspots} onChange={(event) => setMaxHotspots(event.target.value)} /><button className="secondary-button" type="submit">Save quality gate</button><label htmlFor="sonar-profile">Import SonarQube profile XML</label><input id="sonar-profile" type="file" accept=".xml,application/xml,text/xml" onChange={(event) => { const file = event.target.files?.[0]; if (file) void importFile(file) }} />{saveMessage && <small>{saveMessage}</small>}{importMessage && <small>{importMessage}</small>}{profiles.length > 0 && <div className="availability-row"><span>Loaded profiles</span><strong>{profiles.reduce((total, profile) => total + profile.rules.length, 0)} rules</strong><ul>{profiles.flatMap((profile) => profile.rules.map((rule) => <li key={`${profile.language}-${rule.analyzer}-${rule.rule_id}`}>{profile.language}: {rule.analyzer}:{rule.rule_id}</li>))}</ul></div>}</form>}<div className="metric-grid"><article className="metric-card"><button className="table-sort-button" type="button" onClick={() => setShowRisk((value) => !value)}><span>Risk score</span><strong>{observed.risk_score === null ? '—' : observed.risk_score.toFixed(2)}</strong></button><small>Click for breakdown</small></article><article className="metric-card"><span>New critical findings</span><strong>{observed.new_critical_findings}</strong><small><button type="button" onClick={() => onNavigate('findings')}>Open findings</button></small></article><article className="metric-card"><span>New hotspots</span><strong>{observed.new_hotspots}</strong><small><button type="button" onClick={() => onNavigate('hotspots')}>Open hotspots</button></small></article></div>{showRisk && summary.risk_assessment && <div className="panel"><div className="panel-title"><span>Risk score breakdown</span><span className="muted">v{summary.risk_assessment.version}</span></div>{Object.entries(summary.risk_assessment.components).map(([name, value]) => <div className="availability-row" key={name}><span>{name}</span><strong>{value.toFixed(2)} × {(summary.risk_assessment?.weights[name] ?? 0).toFixed(2)}</strong></div>)}<p className="muted">Score is the weighted average of normalized repository evidence components.</p></div>}{gate.status === 'not_configured' && <EmptyState title="Quality gate not configured" description="Configure at least one quality-gate threshold to evaluate this analysis." compact />}{gate.failures.length ? gate.failures.map((failure) => <div className="availability-row" key={failure.code}><strong>{failure.code}</strong><span>{failure.detail}</span></div>) : gate.status !== 'not_configured' && <EmptyState title="All configured rules passed" description="No quality-gate failure was reported." compact />}</div></section>
+  const saveLlm = async () => {
+    try {
+      const configuration = await saveLlmConfiguration({ enabled: llmEnabled, provider: llmProvider, model: llmModel, ...(llmKey ? { api_key: llmKey } : {}) })
+      setLlm(configuration)
+      setLlmKey('')
+      setLlmMessage('Saved. The API key is never shown again.')
+    } catch (error) { setLlmMessage(error instanceof Error ? error.message : 'LLM configuration failed.') }
+  }
+  const llmPanel = <div className="panel"><div className="panel-title"><span>LLM enrichment</span><span className="muted">Optional, evidence-bound</span></div><form className="quality-policy-form" onSubmit={(event) => { event.preventDefault(); void saveLlm() }}><label><input type="checkbox" checked={llmEnabled} onChange={(event) => setLlmEnabled(event.target.checked)} /> Enable configured LLM</label><label htmlFor="llm-provider">Provider</label><input id="llm-provider" value={llmProvider} onChange={(event) => setLlmProvider(event.target.value)} /><label htmlFor="llm-model">Model</label><input id="llm-model" value={llmModel} onChange={(event) => setLlmModel(event.target.value)} /><label htmlFor="llm-api-key">API key {llm?.api_key_configured ? '(configured; leave blank to keep)' : ''}</label><input id="llm-api-key" type="password" value={llmKey} onChange={(event) => setLlmKey(event.target.value)} autoComplete="off" /><button className="secondary-button" type="submit">Save LLM configuration</button>{llmMessage && <small>{llmMessage}</small>}</form></div>
+  return <section className="page-grid">{llmPanel}<div className="panel"><div className="panel-title"><span>Quality gate</span><span className={`status-badge status-${gate.status === 'failed' ? 'failed' : 'completed'}`}>{gate.status === 'not_configured' ? 'not configured' : gate.passed ? 'passed' : 'failed'}</span></div>{projectId && <form className="quality-policy-form" onSubmit={(event) => { event.preventDefault(); void save() }}><label htmlFor="max-critical">Maximum new critical findings</label><input id="max-critical" type="number" min="0" value={maxCritical} onChange={(event) => setMaxCritical(event.target.value)} /><label htmlFor="max-risk-score">Maximum risk score</label><input id="max-risk-score" type="number" min="0" max="1" step="0.01" value={maxRisk} onChange={(event) => setMaxRisk(event.target.value)} /><label htmlFor="max-hotspots">Maximum new hotspots</label><input id="max-hotspots" type="number" min="0" value={maxHotspots} onChange={(event) => setMaxHotspots(event.target.value)} /><button className="secondary-button" type="submit">Save quality gate</button><label htmlFor="sonar-profile">Import SonarQube profile XML</label><input id="sonar-profile" type="file" accept=".xml,application/xml,text/xml" onChange={(event) => { const file = event.target.files?.[0]; if (file) void importFile(file) }} />{saveMessage && <small>{saveMessage}</small>}{importMessage && <small>{importMessage}</small>}{profiles.length > 0 && <div className="availability-row"><span>Loaded profiles</span><strong>{profiles.reduce((total, profile) => total + profile.rules.length, 0)} rules</strong><ul>{profiles.flatMap((profile) => profile.rules.map((rule) => <li key={`${profile.language}-${rule.analyzer}-${rule.rule_id}`}>{profile.language}: {rule.analyzer}:{rule.rule_id}</li>))}</ul></div>}</form>}<div className="metric-grid"><article className="metric-card"><button className="table-sort-button" type="button" onClick={() => setShowRisk((value) => !value)}><span>Risk score</span><strong>{observed.risk_score === null ? '—' : observed.risk_score.toFixed(2)}</strong></button><small>Click for breakdown</small></article><article className="metric-card"><span>New critical findings</span><strong>{observed.new_critical_findings}</strong><small><button type="button" onClick={() => onNavigate('findings')}>Open findings</button></small></article><article className="metric-card"><span>New hotspots</span><strong>{observed.new_hotspots}</strong><small><button type="button" onClick={() => onNavigate('hotspots')}>Open hotspots</button></small></article></div>{showRisk && summary.risk_assessment && <div className="panel"><div className="panel-title"><span>Risk score breakdown</span><span className="muted">v{summary.risk_assessment.version}</span></div>{Object.entries(summary.risk_assessment.components).map(([name, value]) => <div className="availability-row" key={name}><span>{name}</span><strong>{value.toFixed(2)} × {(summary.risk_assessment?.weights[name] ?? 0).toFixed(2)}</strong></div>)}<p className="muted">Score is the weighted average of normalized repository evidence components.</p></div>}{gate.status === 'not_configured' && <EmptyState title="Quality gate not configured" description="Configure at least one quality-gate threshold to evaluate this analysis." compact />}{gate.failures.length ? gate.failures.map((failure) => <div className="availability-row" key={failure.code}><strong>{failure.code}</strong><span>{failure.detail}</span></div>) : gate.status !== 'not_configured' && <EmptyState title="All configured rules passed" description="No quality-gate failure was reported." compact />}</div></section>
 }
 
 function EmptyState({ title, description, compact = false }: { title: string; description: string; compact?: boolean }) {

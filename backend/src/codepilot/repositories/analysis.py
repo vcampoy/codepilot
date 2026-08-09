@@ -56,6 +56,7 @@ from codepilot.domain.analysis import (
     fingerprint_finding,
 )
 from codepilot.domain.insights import FileInsight
+from codepilot.domain.llm_config import LlmConfiguration
 from codepilot.domain.quality import QualityGatePolicy, QualityProfile, QualityRule
 
 
@@ -173,6 +174,10 @@ class AnalysisRepository(Protocol):
         self, project_id: UUID, workspace_id: str, policy: QualityGatePolicy
     ) -> QualityGatePolicy: ...
 
+    async def get_llm_configuration(self, workspace_id: str) -> LlmConfiguration | None: ...
+
+    async def save_llm_configuration(self, configuration: LlmConfiguration) -> LlmConfiguration: ...
+
 
 class InMemoryAnalysisRepository:
     """Small deterministic adapter for unit tests only.
@@ -188,6 +193,16 @@ class InMemoryAnalysisRepository:
         self._projects: dict[UUID, ProjectRecord] = {}
         self._project_keys: dict[tuple[str, str], UUID] = {}
         self._quality_policies: dict[UUID, QualityGatePolicy] = {}
+        self._llm_configurations: dict[str, LlmConfiguration] = {}
+
+    async def get_llm_configuration(self, workspace_id: str) -> LlmConfiguration | None:
+        async with self._lock:
+            return self._llm_configurations.get(workspace_id)
+
+    async def save_llm_configuration(self, configuration: LlmConfiguration) -> LlmConfiguration:
+        async with self._lock:
+            self._llm_configurations[configuration.workspace_id] = configuration
+            return configuration
 
     async def get_quality_policy(
         self, project_id: UUID, workspace_id: str
@@ -653,6 +668,16 @@ _QUALITY_POLICIES = Table(
     Column("payload", JSON, nullable=False),
     Column("updated_at", DateTime(timezone=True), nullable=False),
 )
+_LLM_CONFIGURATIONS = Table(
+    "codepilot_llm_configurations",
+    _METADATA,
+    Column("workspace_id", String(64), primary_key=True),
+    Column("enabled", Boolean, nullable=False),
+    Column("provider", String(128), nullable=False),
+    Column("model", String(256), nullable=False),
+    Column("encrypted_api_key", Text),
+    Column("updated_at", DateTime(timezone=True), nullable=False),
+)
 _FILE_INSIGHTS = Table(
     "codepilot_analysis_file_insights",
     _METADATA,
@@ -725,6 +750,37 @@ class PostgresAnalysisRepository:
             )
             await connection.execute(statement)
         return policy
+
+    async def get_llm_configuration(self, workspace_id: str) -> LlmConfiguration | None:
+        async with self._engine.connect() as connection:
+            row = (
+                (await connection.execute(select(_LLM_CONFIGURATIONS).where(
+                    _LLM_CONFIGURATIONS.c.workspace_id == workspace_id
+                ))).mappings().first()
+            )
+        return _llm_configuration_from_row(row) if row else None
+
+    async def save_llm_configuration(self, configuration: LlmConfiguration) -> LlmConfiguration:
+        async with self._engine.begin() as connection:
+            statement = postgresql_insert(_LLM_CONFIGURATIONS).values(
+                workspace_id=configuration.workspace_id,
+                enabled=configuration.enabled,
+                provider=configuration.provider,
+                model=configuration.model,
+                encrypted_api_key=configuration.encrypted_api_key,
+                updated_at=configuration.updated_at,
+            ).on_conflict_do_update(
+                index_elements=[_LLM_CONFIGURATIONS.c.workspace_id],
+                set_={
+                    "enabled": configuration.enabled,
+                    "provider": configuration.provider,
+                    "model": configuration.model,
+                    "encrypted_api_key": configuration.encrypted_api_key,
+                    "updated_at": configuration.updated_at,
+                },
+            )
+            await connection.execute(statement)
+        return configuration
 
     async def get_or_create_project(self, repository_url: str, workspace_id: str) -> ProjectRecord:
         key = normalize_repository_url(repository_url)
@@ -1591,4 +1647,15 @@ def _risk_from_json(value: Any) -> RiskAssessment | None:
             str(key): float(item) for key, item in dict(value.get("components", {})).items()
         },
         weights={str(key): float(item) for key, item in dict(value.get("weights", {})).items()},
+    )
+
+
+def _llm_configuration_from_row(value: Any) -> LlmConfiguration:
+    return LlmConfiguration(
+        workspace_id=str(value["workspace_id"]),
+        enabled=bool(value["enabled"]),
+        provider=str(value["provider"]),
+        model=str(value["model"]),
+        encrypted_api_key=value.get("encrypted_api_key"),
+        updated_at=value["updated_at"],
     )
