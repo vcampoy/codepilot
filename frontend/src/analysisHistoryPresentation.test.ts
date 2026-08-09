@@ -6,11 +6,14 @@ const HISTORY_SCORE = 0.8
 describe('analysis history presentation', () => {
   it('formats risk score and category while preserving an empty score', () => {
     expect(formatHistoryRisk(HISTORY_SCORE, 'high')).toBe('0.80 (high)')
+    expect(formatHistoryRisk(HISTORY_SCORE, null)).toBe('0.80')
     expect(formatHistoryRisk(null, null)).toBe('—')
   })
 
   it('formats stored UTC dates for the user locale', () => {
-    expect(formatHistoryDate('2026-08-09T12:00:00Z')).toContain('2026')
+    const formatted = formatHistoryDate('2026-08-09T12:00:00Z')
+    expect(formatted).toContain('2026')
+    expect(formatted).toMatch(/\d{1,2}:\d{2}/)
   })
 
   it('accepts only keyboard activation keys', () => {

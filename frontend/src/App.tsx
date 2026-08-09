@@ -29,9 +29,13 @@ import {
   type AnalysisHistoryItem,
   type LlmConfiguration,
 } from './api'
+import { deleteAnalyses, type AnalysisDeletionResult } from './analysisDeletion'
+import { getSelectionState, toggleAllHistorySelection, toggleHistorySelection } from './analysisHistorySelection'
+import { getLlmModelOptions } from './llmModelOptions'
 import { createFindingsMarkdownExport, downloadMarkdownFile } from './findingsExport'
 import { createHotspotsMarkdownExport, MAX_HOTSPOTS_EXPORT } from './hotspotsExport'
 import { TableFilterDialog } from './components/TableFilterDialog'
+import { ConfirmationDialog } from './components/ConfirmationDialog'
 import { formatHistoryDate, formatHistoryRisk, isHistoryActivationKey, totalHotspots } from './analysisHistoryPresentation'
 import {
   FINDING_COLUMNS,
@@ -339,11 +343,9 @@ function App() {
           setSelectedFilePath(null)
           void getAnalysisSummary(run.analysis_id).then((result) => setSummary(result.summary)).catch(() => undefined)
           navigate('overview')
-        }} onDelete={async (run) => {
-          if (!window.confirm(`Delete analysis for ${run.repository_name}?`)) return
-          try {
-            await deleteAnalysis(run.analysis_id)
-            if (analysisId === run.analysis_id) {
+        }} onDelete={async (analysisIds) => {
+          const result = await deleteAnalyses(analysisIds, deleteAnalysis)
+          if (analysisId && result.deleted.includes(analysisId)) {
               setAnalysisId(null)
               setAnalyzedRepositoryUrl(null)
               setStatus(null)
@@ -353,11 +355,9 @@ function App() {
               setFileInsights([])
               setSelectedFilePath(null)
               navigate('analyses')
-            }
-            await refreshHistory()
-          } catch (deleteError) {
-            setError(deleteError instanceof Error ? deleteError.message : 'Analysis could not be deleted.')
           }
+          await refreshHistory()
+          return result
         }} />}
         {activeView === 'overview' && <OverviewView analysisId={analysisId} status={status} summary={summary} />}
         {activeView === 'findings' && <FindingsView findings={findings} status={status} summary={summary} error={error || findingsError} repositoryUrl={analyzedRepositoryUrl} analysisId={analysisId} onSelectPath={(path) => { setSelectedFilePath(path); navigate('files') }} />}
@@ -585,9 +585,44 @@ function OverviewView({ analysisId, status, summary }: { analysisId: string | nu
   return <section className="page-grid"><div className="section-heading"><div><p className="kicker">Analysis overview</p><h2>{analysisId ? `Run ${analysisId.slice(0, 8)}` : 'No active analysis'}</h2></div><span className={`status-badge status-${status}`}>{status || 'idle'}</span></div><div className="metric-grid">{cards.map(([label, value, note]) => <article className="metric-card" key={label}><span>{label}</span><strong>{value}</strong><small>{note}</small></article>)}</div><div className="panel"><div className="panel-title"><span>Findings by severity</span><span className="muted">Reported by the API</span></div>{summary ? Object.entries(summary.finding_count_by_severity).map(([severity, count]) => <div className="availability-row" key={severity}><span>{severity}</span><strong>{count}</strong></div>) : <EmptyState title="Severity data pending" description="Completed analyzer output will populate this breakdown." compact />}</div><div className="panel"><div className="panel-title"><span>Analyzer outcomes</span><span className="muted">Worker evidence</span></div>{summary?.analyzer_outcomes?.length ? summary.analyzer_outcomes.map((item) => <div className="availability-row" key={item.analyzer}><span>{item.analyzer}</span><span className={`availability-${item.status}`}>{item.status}</span><small>{item.tool}</small></div>) : <EmptyState title="Analyzer evidence pending" description="Completed analyzer output will populate this list." compact />}</div><div className="panel"><div className="panel-title"><span>Optional AI explanation</span><span className="muted">Always grounded in stored evidence</span></div><button className="secondary-button" disabled={!summary || enrichmentBusy} onClick={() => void explain()} type="button">{enrichmentBusy ? 'Generating...' : 'Explain deterministic summary'}</button>{enrichmentError && <p className="error-copy" role="alert">{enrichmentError}</p>}{enrichment && <div className="ai-result"><strong>{enrichment.ai_generated ? 'AI-generated explanation' : 'AI enrichment disabled'}</strong>{enrichment.text && <p>{enrichment.text}</p>}{enrichment.citations.length > 0 && <small>Citations: {enrichment.citations.join(', ')}</small>}</div>}</div></section>
 }
 
-function HistoryView({ items, busy, error, onSelectRun, onDelete }: { items: AnalysisHistoryItem[]; busy: boolean; error: string | null; onSelectRun: (run: AnalysisHistoryItem) => void; onDelete: (run: AnalysisHistoryItem) => void }) {
+function HistoryView({ items, busy, error, onSelectRun, onDelete }: { items: AnalysisHistoryItem[]; busy: boolean; error: string | null; onSelectRun: (run: AnalysisHistoryItem) => void; onDelete: (analysisIds: readonly string[]) => Promise<AnalysisDeletionResult> }) {
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(() => new Set())
+  const [confirmationIds, setConfirmationIds] = useState<string[] | null>(null)
+  const [deleteBusy, setDeleteBusy] = useState(false)
+  const [deleteError, setDeleteError] = useState<string | null>(null)
+  const visibleIds = items.map((item) => item.analysis_id)
+  const selectionState = getSelectionState(selectedIds, visibleIds)
+
+  useEffect(() => {
+    setSelectedIds((current) => new Set([...current].filter((id) => visibleIds.includes(id))))
+  }, [items])
+
   const select = (run: AnalysisHistoryItem) => onSelectRun(run)
-  return <section className="page-grid"><div className="panel table-panel"><div className="panel-title"><span>Analysis history</span><span className="muted">Latest first</span></div>{error && <p className="error-copy" role="alert">{error}</p>}{busy ? <EmptyState title="Loading history" description="Reading completed analyses." compact /> : items.length ? <div className="history-table-wrap"><table className="history-table"><caption className="sr-only">Completed repository analyses</caption><thead><tr><th scope="col">Repository</th><th scope="col">Risk</th><th scope="col">Findings</th><th scope="col">Files</th><th scope="col">Duration</th><th scope="col">Date</th><th scope="col">Actions</th></tr></thead><tbody>{items.map((item) => <tr className="history-table-row" key={item.analysis_id} onClick={() => select(item)} onKeyDown={(event) => { if (isHistoryActivationKey(event.key)) { event.preventDefault(); select(item) } }} tabIndex={0}><th scope="row"><a href="#overview" onClick={(event) => { event.preventDefault(); select(item) }}>{item.repository_name}</a><code>{item.analysis_id}</code></th><td>{formatHistoryRisk(item.risk_score, item.risk_category)}</td><td>{item.finding_count}</td><td>{item.analyzed_file_count}</td><td>{item.duration_seconds.toFixed(1)}s</td><td>{formatHistoryDate(item.created_at)}</td><td><button aria-label={`Delete analysis ${item.repository_name}`} className="danger-button" type="button" onClick={(event) => { event.stopPropagation(); void onDelete(item) }}>Delete</button></td></tr>)}</tbody></table></div> : <EmptyState title="No analyses" description="Submit a repository to create your first completed analysis." compact />}</div></section>
+  const openDelete = (analysisIds: readonly string[]) => {
+    setDeleteError(null)
+    setConfirmationIds([...analysisIds])
+  }
+  const confirmDelete = async () => {
+    if (!confirmationIds?.length) return
+    setDeleteBusy(true)
+    setDeleteError(null)
+    try {
+      const result = await onDelete(confirmationIds)
+      setSelectedIds((current) => {
+        const next = new Set(current)
+        result.deleted.forEach((id) => next.delete(id))
+        return next
+      })
+      if (result.failed.length > 0) setDeleteError(`${result.failed.length} analysis${result.failed.length === 1 ? '' : 'es'} could not be deleted.`)
+      setConfirmationIds(null)
+    } catch (deleteError) {
+      setDeleteError(deleteError instanceof Error ? deleteError.message : 'Analysis could not be deleted.')
+    } finally {
+      setDeleteBusy(false)
+    }
+  }
+
+  return <section className="page-grid"><div className="panel table-panel"><div className="panel-title"><span>Analysis history</span><div className="table-actions"><span className="muted">Latest first</span><button className="danger-button" disabled={selectedIds.size === 0 || deleteBusy} onClick={() => openDelete([...selectedIds])} type="button">Delete selected ({selectedIds.size})</button></div></div>{error && <p className="error-copy" role="alert">{error}</p>}{deleteError && <p className="error-copy" role="alert">{deleteError}</p>}{busy ? <EmptyState title="Loading history" description="Reading completed analyses." compact /> : items.length ? <div className="history-table-wrap"><table className="history-table"><caption className="sr-only">Completed repository analyses</caption><thead><tr><th className="history-select-cell" scope="col"><label><span className="sr-only">Select all analyses</span><input aria-label="Select all analyses" checked={selectionState.checked} ref={(element) => { if (element) element.indeterminate = selectionState.indeterminate }} onChange={(event) => setSelectedIds((current) => toggleAllHistorySelection(current, visibleIds, event.target.checked))} type="checkbox" /></label></th><th scope="col">Repository</th><th scope="col">Risk</th><th scope="col">Findings</th><th scope="col">Files</th><th scope="col">Duration</th><th scope="col">Date</th><th scope="col">Actions</th></tr></thead><tbody>{items.map((item) => <tr className="history-table-row" key={item.analysis_id} onClick={() => select(item)} onKeyDown={(event) => { if (isHistoryActivationKey(event.key)) { event.preventDefault(); select(item) } }} tabIndex={0}><td className="history-select-cell" onClick={(event) => event.stopPropagation()}><input aria-label={`Select analysis ${item.repository_name}`} checked={selectedIds.has(item.analysis_id)} onChange={() => setSelectedIds((current) => toggleHistorySelection(current, item.analysis_id))} type="checkbox" /></td><th scope="row"><a href="#overview" onClick={(event) => { event.preventDefault(); select(item) }}>{item.repository_name}</a><code>{item.analysis_id}</code></th><td>{formatHistoryRisk(item.risk_score, item.risk_category)}</td><td>{item.finding_count}</td><td>{item.analyzed_file_count}</td><td>{item.duration_seconds.toFixed(1)}s</td><td>{formatHistoryDate(item.created_at)}</td><td><button aria-label={`Delete analysis ${item.repository_name}`} className="danger-button" disabled={deleteBusy} type="button" onClick={(event) => { event.stopPropagation(); openDelete([item.analysis_id]) }}>Delete</button></td></tr>)}</tbody></table></div> : <EmptyState title="No analyses" description="Submit a repository to create your first completed analysis." compact />}</div><ConfirmationDialog busy={deleteBusy} confirmLabel={confirmationIds?.length === 1 ? 'Delete analysis' : 'Delete analyses'} onCancel={() => { if (!deleteBusy) setConfirmationIds(null) }} onConfirm={() => void confirmDelete()} open={confirmationIds !== null} title={confirmationIds?.length === 1 ? 'Delete analysis?' : 'Delete selected analyses?'}>{confirmationIds?.length === 1 ? 'This analysis and its stored evidence will be deleted. This cannot be undone.' : `This will permanently delete ${confirmationIds?.length ?? 0} analyses and their stored evidence. This cannot be undone.`}</ConfirmationDialog></section>
 }
 
 function HotspotsView({ hotspots, status, error, repositoryUrl, analysisId, onSelectPath }: { hotspots: FileInsight[]; status: AnalysisStatus | null; error: string | null; repositoryUrl: string | null; analysisId: string | null; onSelectPath: (path: string) => void }) {
@@ -823,16 +858,30 @@ function QualityGateView({ summary, projectId, onNavigate }: { summary: Analysis
   const [llm, setLlm] = useState<LlmConfiguration | null>(null)
   const [llmProvider, setLlmProvider] = useState('openai')
   const [llmModel, setLlmModel] = useState('gpt-4o-mini')
+  const [llmModelOptions, setLlmModelOptions] = useState<string[]>([])
   const [llmKey, setLlmKey] = useState('')
   const [llmEnabled, setLlmEnabled] = useState(false)
   const [llmMessage, setLlmMessage] = useState<string | null>(null)
+  const [llmLoading, setLlmLoading] = useState(true)
+  const [llmLoadError, setLlmLoadError] = useState<string | null>(null)
+  const [llmSaving, setLlmSaving] = useState(false)
   useEffect(() => {
+    let cancelled = false
+    setLlmLoading(true)
+    setLlmLoadError(null)
     void getLlmConfiguration().then((configuration) => {
+      if (cancelled) return
       setLlm(configuration)
       setLlmProvider(configuration.provider)
       setLlmModel(configuration.model)
+      setLlmModelOptions(getLlmModelOptions(configuration.provider, configuration.model))
       setLlmEnabled(configuration.enabled)
-    }).catch(() => undefined)
+    }).catch((loadError) => {
+      if (!cancelled) setLlmLoadError(loadError instanceof Error ? loadError.message : 'LLM models unavailable.')
+    }).finally(() => {
+      if (!cancelled) setLlmLoading(false)
+    })
+    return () => { cancelled = true }
   }, [])
   useEffect(() => {
     if (!projectId) return
@@ -854,15 +903,19 @@ function QualityGateView({ summary, projectId, onNavigate }: { summary: Analysis
     try { const report = await importQualityProfile(projectId, await file.text()); setImportMessage(`Imported ${report.mapped} rules; ${report.unsupported.length} unsupported.`); const policy = await getQualityPolicy(projectId); setProfiles(policy.profiles) } catch (error) { setImportMessage(error instanceof Error ? error.message : 'Import failed.') }
   }
   const saveLlm = async () => {
+    if (!llmModel) return
+    setLlmSaving(true)
     try {
       const configuration = await saveLlmConfiguration({ enabled: llmEnabled, provider: llmProvider, model: llmModel, ...(llmKey ? { api_key: llmKey } : {}) })
       setLlm(configuration)
+      setLlmModelOptions(getLlmModelOptions(configuration.provider, configuration.model))
       setLlmKey('')
       setLlmMessage('Saved. The API key is never shown again.')
     } catch (error) { setLlmMessage(error instanceof Error ? error.message : 'LLM configuration failed.') }
+    finally { setLlmSaving(false) }
   }
   const hotspotCount = totalHotspots(summary.hotspot_count)
-  const llmPanel = <div className="panel"><div className="panel-title"><span>LLM enrichment</span><span className="muted">Optional, evidence-bound</span></div><form className="quality-policy-form" onSubmit={(event) => { event.preventDefault(); void saveLlm() }}><label className="form-checkbox"><input type="checkbox" checked={llmEnabled} onChange={(event) => setLlmEnabled(event.target.checked)} /> Enable configured LLM</label><div className="form-grid"><div className="form-field"><label htmlFor="llm-provider">Provider</label><input id="llm-provider" value={llmProvider} onChange={(event) => setLlmProvider(event.target.value)} /></div><div className="form-field"><label htmlFor="llm-model">Model</label><input id="llm-model" value={llmModel} onChange={(event) => setLlmModel(event.target.value)} /></div><div className="form-field form-field-wide"><label htmlFor="llm-api-key">API key {llm?.api_key_configured ? '(configured; leave blank to keep)' : ''}</label><input id="llm-api-key" type="password" value={llmKey} onChange={(event) => setLlmKey(event.target.value)} autoComplete="off" /></div></div><div className="form-actions"><button className="secondary-button" type="submit">Save LLM configuration</button>{llmMessage && <small className="form-message" role="status">{llmMessage}</small>}</div></form></div>
+  const llmPanel = <div className="panel"><div className="panel-title"><span>LLM enrichment</span><span className="muted">Optional, evidence-bound</span></div><form className="quality-policy-form" onSubmit={(event) => { event.preventDefault(); void saveLlm() }}><label className="form-checkbox"><input type="checkbox" checked={llmEnabled} onChange={(event) => setLlmEnabled(event.target.checked)} /> Enable configured LLM</label><div className="form-grid"><div className="form-field"><label htmlFor="llm-provider">Provider</label><input id="llm-provider" value={llmProvider} onChange={(event) => { const provider = event.target.value; const options = getLlmModelOptions(provider, null); setLlmProvider(provider); setLlmModelOptions(options); setLlmModel(options[0] ?? '') }} /></div><div className="form-field"><label htmlFor="llm-model">Model</label><select aria-describedby={llmLoadError ? 'llm-model-error' : undefined} disabled={llmLoading || llmSaving || llmModelOptions.length === 0} id="llm-model" onChange={(event) => setLlmModel(event.target.value)} value={llmModel}><option value="">{llmLoading ? 'Loading models…' : 'Select a model'}</option>{llmModelOptions.map((model) => <option key={model} value={model}>{model}</option>)}</select>{llmLoadError && <small className="form-message" id="llm-model-error" role="alert">{llmLoadError}</small>}</div><div className="form-field form-field-wide"><label htmlFor="llm-api-key">API key {llm?.api_key_configured ? '(configured; leave blank to keep)' : ''}</label><input id="llm-api-key" type="password" value={llmKey} onChange={(event) => setLlmKey(event.target.value)} autoComplete="off" /></div></div><div className="form-actions"><button className="secondary-button" disabled={llmLoading || llmSaving || llmModelOptions.length === 0 || !llmModel} type="submit">{llmSaving ? 'Saving...' : 'Save LLM configuration'}</button>{llmMessage && <small className="form-message" role="status">{llmMessage}</small>}</div></form></div>
   return <section className="page-grid">{llmPanel}<div className="panel"><div className="panel-title"><span>Quality gate</span><span className={`status-badge status-${gate.status === 'failed' ? 'failed' : 'completed'}`}>{gate.status === 'not_configured' ? 'not configured' : gate.passed ? 'passed' : 'failed'}</span></div>{projectId && <form className="quality-policy-form" onSubmit={(event) => { event.preventDefault(); void save() }}><div className="form-grid"><div className="form-field"><label htmlFor="max-critical">Maximum new critical findings</label><input id="max-critical" type="number" min="0" value={maxCritical} onChange={(event) => setMaxCritical(event.target.value)} /></div><div className="form-field"><label htmlFor="max-risk-score">Maximum risk score</label><input id="max-risk-score" type="number" min="0" max="1" step="0.01" value={maxRisk} onChange={(event) => setMaxRisk(event.target.value)} /></div><div className="form-field"><label htmlFor="max-hotspots">Maximum new hotspots</label><input id="max-hotspots" type="number" min="0" value={maxHotspots} onChange={(event) => setMaxHotspots(event.target.value)} /></div><div className="form-field form-field-wide"><label htmlFor="sonar-profile">Import SonarQube profile XML</label><input id="sonar-profile" type="file" accept=".xml,application/xml,text/xml" onChange={(event) => { const file = event.target.files?.[0]; if (file) void importFile(file) }} /></div></div><div className="form-actions"><button className="secondary-button" type="submit">Save quality gate</button>{saveMessage && <small className="form-message" role="status">{saveMessage}</small>}{importMessage && <small className="form-message" role="status">{importMessage}</small>}</div>{profiles.length > 0 && <div className="availability-row"><span>Loaded profiles</span><strong>{profiles.reduce((total, profile) => total + profile.rules.length, 0)} rules</strong><ul>{profiles.flatMap((profile) => profile.rules.map((rule) => <li key={`${profile.language}-${rule.analyzer}-${rule.rule_id}`}>{profile.language}: {rule.analyzer}:{rule.rule_id}</li>))}</ul></div>}</form>}<div className="metric-grid"><article className="metric-card"><button className="table-sort-button" type="button" onClick={() => setShowRisk((value) => !value)}><span>Risk score</span><strong>{observed.risk_score === null ? '—' : observed.risk_score.toFixed(2)}</strong></button><small>Click for breakdown</small></article><article className="metric-card"><span>New critical findings</span><strong>{observed.new_critical_findings}</strong><small><button type="button" onClick={() => onNavigate('findings')}>Open findings</button></small></article><article className="metric-card"><span>Hotspots</span><strong>{hotspotCount}</strong><small><button type="button" onClick={() => onNavigate('hotspots')}>Open hotspots</button></small></article></div>{showRisk && summary.risk_assessment && <div className="panel"><div className="panel-title"><span>Risk score breakdown</span><span className="muted">v{summary.risk_assessment.version}</span></div>{Object.entries(summary.risk_assessment.components).map(([name, value]) => <div className="availability-row" key={name}><span>{name}</span><strong>{value.toFixed(2)} × {(summary.risk_assessment?.weights[name] ?? 0).toFixed(2)}</strong></div>)}<p className="muted">Score is the weighted average of normalized repository evidence components.</p></div>}{gate.status === 'not_configured' && <EmptyState title="Quality gate not configured" description="Configure at least one quality-gate threshold to evaluate this analysis." compact />}{gate.failures.length ? gate.failures.map((failure) => <div className="availability-row" key={failure.code}><strong>{failure.code}</strong><span>{failure.detail}</span></div>) : gate.status !== 'not_configured' && <EmptyState title="All configured rules passed" description="No quality-gate failure was reported." compact />}</div></section>
 }
 

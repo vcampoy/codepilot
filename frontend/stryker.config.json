@@ -6,7 +6,10 @@
   },
   "mutate": [
     "src/api.ts:157-164",
-    "src/analysisHistoryPresentation.ts"
+    "src/analysisHistoryPresentation.ts",
+    "src/analysisHistorySelection.ts",
+    "src/analysisDeletion.ts",
+    "src/llmModelOptions.ts"
   ],
   "coverageAnalysis": "perTest",
   "reporters": [
