@@ -5,6 +5,7 @@ import {
   downloadMarkdownFile,
   repositoryNameFromUrl,
 } from './findingsExport'
+import type { FindingFilters, FindingSort } from './findingsPresentation'
 
 const FINDINGS: readonly AnalysisFinding[] = Object.freeze([
   {
@@ -66,6 +67,30 @@ describe('findings Markdown export', () => {
     expect(exported.content).toContain('> Split the expression and use &lt;safe&gt; input.')
     expect(exported.content).toContain('### 2. [high] no-any')
     expect(exported.content).toContain('_Not provided by analyzer._')
+  })
+
+  it('exports the visible findings and records active filters, ordering, and totals', () => {
+    const visibleFindings = [FINDINGS[1]] as const
+    const filters: FindingFilters = { severities: ['high'], types: ['Security'] }
+    const sort: FindingSort = { column: 'severity', direction: 'desc' }
+
+    const exported = createFindingsMarkdownExport({
+      repositoryUrl: 'https://github.com/vcampoy/codepilot',
+      analysisId: 'analysis-123',
+      findings: visibleFindings,
+      totalFindings: FINDINGS.length,
+      filters,
+      sort,
+      exportedAt: EXPORTED_AT,
+    })
+
+    expect(exported.content).toContain('- Total findings: 1')
+    expect(exported.content).toContain('- Total findings available: 2')
+    expect(exported.content).toContain('- Severity filter: high')
+    expect(exported.content).toContain('- Type filter: Security')
+    expect(exported.content).toContain('- Sort: Severity (descending)')
+    expect(exported.content).toContain('Avoid any | high | no-any')
+    expect(exported.content).not.toContain('Line contains')
   })
 
   it('downloads the Markdown and releases browser resources', () => {

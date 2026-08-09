@@ -135,6 +135,26 @@ describe('completed analysis result loading', () => {
     expect(screen.getByText('No findings match the selected filters.')).toBeInTheDocument()
   })
 
+  it('disables findings export when filters hide every finding', async () => {
+    configureCompletedRun()
+    fixtures.getAnalysisFindings.mockResolvedValue([finding])
+    fixtures.getAnalysisHotspots.mockResolvedValue([insight])
+    fixtures.getAnalysisFiles.mockResolvedValue({ items: [insight], total: 1, limit: 100, offset: 0 })
+
+    render(<App />)
+    fireEvent.submit(screen.getByRole('button', { name: 'Analyze repository' }).closest('form')!, {
+      preventDefault: () => undefined,
+    })
+    fireEvent.click(await screen.findByRole('button', { name: 'Findings' }))
+    await waitFor(() => expect(screen.getByText('Findings (1)')).toBeInTheDocument())
+
+    const exportButton = screen.getByRole('button', { name: 'Export findings (.md)' })
+    expect(exportButton).toBeEnabled()
+    fireEvent.click(screen.getByRole('checkbox', { name: 'Critical' }))
+    expect(screen.getByText('No findings match the selected filters.')).toBeInTheDocument()
+    expect(exportButton).toBeDisabled()
+  })
+
   it('keeps findings and hotspots after the polling status changes to completed', async () => {
     const findings = deferred<typeof finding[]>()
     const hotspots = deferred<typeof insight[]>()

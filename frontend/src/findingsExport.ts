@@ -1,5 +1,5 @@
 import type { AnalysisFinding } from './api'
-import { categoryLabel, displaySeverity } from './findingsPresentation'
+import { categoryLabel, displaySeverity, type FindingFilters, type FindingSort } from './findingsPresentation'
 
 const MARKDOWN_MIME_TYPE = 'text/markdown;charset=utf-8'
 
@@ -7,6 +7,9 @@ export interface FindingsMarkdownExportInput {
   repositoryUrl: string
   analysisId: string
   findings: readonly AnalysisFinding[]
+  totalFindings?: number
+  filters?: FindingFilters
+  sort?: FindingSort
   exportedAt: Date
 }
 
@@ -36,6 +39,14 @@ export function createFindingsMarkdownExport(input: FindingsMarkdownExportInput)
   const timestamp = formatLocalTimestamp(input.exportedAt)
   const rows = input.findings.map(formatFindingRow).join('\n')
   const details = input.findings.map(formatFindingDetails).join('\n\n')
+  const metadata = input.filters && input.sort
+    ? [
+        `- Total findings available: ${input.totalFindings ?? input.findings.length}`,
+        `- Severity filter: ${formatFilterValues(input.filters.severities)}`,
+        `- Type filter: ${formatFilterValues(input.filters.types)}`,
+        `- Sort: ${formatSort(input.sort)}`,
+      ]
+    : []
   const content = [
     `# Findings for ${repositoryName}`,
     '',
@@ -43,6 +54,7 @@ export function createFindingsMarkdownExport(input: FindingsMarkdownExportInput)
     `- Analysis: ${input.analysisId}`,
     `- Exported at: ${input.exportedAt.toISOString()}`,
     `- Total findings: ${input.findings.length}`,
+    ...metadata,
     '',
     '| Description | Severity | Rule | Location | Analyzer | Type |',
     '| --- | --- | --- | --- | --- | --- |',
@@ -55,6 +67,15 @@ export function createFindingsMarkdownExport(input: FindingsMarkdownExportInput)
     filename: `${repositoryName}-findings-${timestamp}.md`,
     content,
   }
+}
+
+function formatFilterValues(values: readonly string[]): string {
+  return values.length > 0 ? values.join(', ') : 'All'
+}
+
+function formatSort(sort: FindingSort): string {
+  const column = sort.column.charAt(0).toUpperCase() + sort.column.slice(1)
+  return `${column} (${sort.direction === 'asc' ? 'ascending' : 'descending'})`
 }
 
 export function downloadMarkdownFile(

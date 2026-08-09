@@ -303,7 +303,10 @@ function FindingsView({ findings, status, summary, error, repositoryUrl, analysi
     const file = createFindingsMarkdownExport({
       repositoryUrl,
       analysisId,
-      findings,
+      findings: orderedFindings,
+      totalFindings: findings.length,
+      filters,
+      sort,
       exportedAt: new Date(),
     })
     downloadMarkdownFile(file)
@@ -385,7 +388,14 @@ function FindingsView({ findings, status, summary, error, repositoryUrl, analysi
                 ))}
               </fieldset>
             </details>
-            <button className="secondary-button" onClick={exportFindings} type="button">Export findings (.md)</button>
+            <button
+              className="secondary-button"
+              disabled={orderedFindings.length === 0}
+              onClick={exportFindings}
+              type="button"
+            >
+              Export findings (.md)
+            </button>
           </div>
         </div>
         {filteredFindings.length === 0 ? (
