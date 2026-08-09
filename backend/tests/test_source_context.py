@@ -32,15 +32,17 @@ def test_capture_source_context_skips_unsafe_binary_sensitive_and_oversized_file
     credentials.write_text("//registry/:_authToken=secret", encoding="utf-8")
     outside = AnalysisFinding("../outside.py", "R1", "high", "bad", 1, 1)
     assert capture_source_context(tmp_path, outside) is None
-    assert capture_source_context(
-        tmp_path, AnalysisFinding("binary.py", "R1", "high", "bad", 1, 1)
-    ) is None
-    assert capture_source_context(
-        tmp_path, AnalysisFinding(".env", "R1", "high", "bad", 1, 1)
-    ) is None
-    assert capture_source_context(
-        tmp_path, AnalysisFinding(".npmrc", "R1", "high", "bad", 1, 1)
-    ) is None
+    assert (
+        capture_source_context(tmp_path, AnalysisFinding("binary.py", "R1", "high", "bad", 1, 1))
+        is None
+    )
+    assert (
+        capture_source_context(tmp_path, AnalysisFinding(".env", "R1", "high", "bad", 1, 1)) is None
+    )
+    assert (
+        capture_source_context(tmp_path, AnalysisFinding(".npmrc", "R1", "high", "bad", 1, 1))
+        is None
+    )
 
 
 def test_capture_source_context_rejects_malformed_finding_ranges(tmp_path: Path) -> None:

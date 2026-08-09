@@ -293,7 +293,9 @@ class InMemoryAnalysisRepository:
             items = tuple(
                 _history_from_record(
                     record,
-                    self._projects.get(record.project_id) if record.project_id is not None else None,
+                    self._projects.get(record.project_id)
+                    if record.project_id is not None
+                    else None,
                 )
                 for record in records[offset : offset + limit]
             )
@@ -793,30 +795,40 @@ class PostgresAnalysisRepository:
     async def get_llm_configuration(self, workspace_id: str) -> LlmConfiguration | None:
         async with self._engine.connect() as connection:
             row = (
-                (await connection.execute(select(_LLM_CONFIGURATIONS).where(
-                    _LLM_CONFIGURATIONS.c.workspace_id == workspace_id
-                ))).mappings().first()
+                (
+                    await connection.execute(
+                        select(_LLM_CONFIGURATIONS).where(
+                            _LLM_CONFIGURATIONS.c.workspace_id == workspace_id
+                        )
+                    )
+                )
+                .mappings()
+                .first()
             )
         return _llm_configuration_from_row(row) if row else None
 
     async def save_llm_configuration(self, configuration: LlmConfiguration) -> LlmConfiguration:
         async with self._engine.begin() as connection:
-            statement = postgresql_insert(_LLM_CONFIGURATIONS).values(
-                workspace_id=configuration.workspace_id,
-                enabled=configuration.enabled,
-                provider=configuration.provider,
-                model=configuration.model,
-                encrypted_api_key=configuration.encrypted_api_key,
-                updated_at=configuration.updated_at,
-            ).on_conflict_do_update(
-                index_elements=[_LLM_CONFIGURATIONS.c.workspace_id],
-                set_={
-                    "enabled": configuration.enabled,
-                    "provider": configuration.provider,
-                    "model": configuration.model,
-                    "encrypted_api_key": configuration.encrypted_api_key,
-                    "updated_at": configuration.updated_at,
-                },
+            statement = (
+                postgresql_insert(_LLM_CONFIGURATIONS)
+                .values(
+                    workspace_id=configuration.workspace_id,
+                    enabled=configuration.enabled,
+                    provider=configuration.provider,
+                    model=configuration.model,
+                    encrypted_api_key=configuration.encrypted_api_key,
+                    updated_at=configuration.updated_at,
+                )
+                .on_conflict_do_update(
+                    index_elements=[_LLM_CONFIGURATIONS.c.workspace_id],
+                    set_={
+                        "enabled": configuration.enabled,
+                        "provider": configuration.provider,
+                        "model": configuration.model,
+                        "encrypted_api_key": configuration.encrypted_api_key,
+                        "updated_at": configuration.updated_at,
+                    },
+                )
             )
             await connection.execute(statement)
         return configuration
@@ -919,7 +931,9 @@ class PostgresAnalysisRepository:
             )
             result = await connection.execute(
                 select(_ANALYSES, _PROJECTS.c.name.label("repository_name"))
-                .select_from(_ANALYSES.outerjoin(_PROJECTS, _ANALYSES.c.project_id == _PROJECTS.c.project_id))
+                .select_from(
+                    _ANALYSES.outerjoin(_PROJECTS, _ANALYSES.c.project_id == _PROJECTS.c.project_id)
+                )
                 .where(
                     _ANALYSES.c.workspace_id == workspace_id,
                     _ANALYSES.c.status == AnalysisStatus.COMPLETED.value,
@@ -949,7 +963,9 @@ class PostgresAnalysisRepository:
             await connection.execute(
                 _FILE_INSIGHTS.delete().where(_FILE_INSIGHTS.c.analysis_id == analysis_id)
             )
-            await connection.execute(_FINDINGS.delete().where(_FINDINGS.c.analysis_id == analysis_id))
+            await connection.execute(
+                _FINDINGS.delete().where(_FINDINGS.c.analysis_id == analysis_id)
+            )
             await connection.execute(
                 _ANALYSES.delete().where(
                     _ANALYSES.c.analysis_id == analysis_id,
@@ -1580,140 +1596,162 @@ def _paths_match(left: str, right: str) -> bool:
 
 
 def _summary_to_json(summary: AnalysisSummary) -> dict[str, object]:
-    payload: dict[str, object] = {
+    payload = _summary_base_to_json(summary)
+    payload.update(_summary_optional_to_json(summary))
+    return payload
+
+
+def _summary_base_to_json(summary: AnalysisSummary) -> dict[str, object]:
+    return {
         "analyzed_file_count": summary.analyzed_file_count,
         "source_lines": summary.source_lines,
         "finding_count_by_severity": summary.finding_count_by_severity,
         "duration_seconds": summary.duration_seconds,
         "analyzer_outcomes": [
-            {
-                "analyzer": item.analyzer,
-                "tool": item.tool,
-                "version": item.version,
-                "status": item.status,
-                "duration_seconds": item.duration_seconds,
-                "message": item.message,
-                "language": item.language,
-                "generic": item.generic,
-            }
-            for item in summary.analyzer_outcomes
+            _analyzer_outcome_to_json(item) for item in summary.analyzer_outcomes
         ],
     }
+
+
+def _analyzer_outcome_to_json(item: AnalyzerOutcome) -> dict[str, object]:
+    return {
+        "analyzer": item.analyzer,
+        "tool": item.tool,
+        "version": item.version,
+        "status": item.status,
+        "duration_seconds": item.duration_seconds,
+        "message": item.message,
+        "language": item.language,
+        "generic": item.generic,
+    }
+
+
+def _summary_optional_to_json(summary: AnalysisSummary) -> dict[str, object]:
+    payload: dict[str, object] = {}
     if summary.risk_assessment is not None:
         payload["risk_assessment"] = _risk_to_json(summary.risk_assessment)
     if summary.quality_gate is not None:
-        payload["quality_gate"] = {
-            "passed": summary.quality_gate.passed,
-            "configured": summary.quality_gate.configured,
-            "failures": [
-                {"code": failure.code, "detail": failure.detail}
-                for failure in summary.quality_gate.failures
-            ],
-            "thresholds": {
-                "max_new_critical_findings": (
-                    summary.quality_gate.thresholds.max_new_critical_findings
-                ),
-                "max_risk_score": summary.quality_gate.thresholds.max_risk_score,
-                "max_new_hotspots": summary.quality_gate.thresholds.max_new_hotspots,
-            },
-            "observed": {
-                "new_critical_findings": summary.quality_gate.observed.new_critical_findings,
-                "risk_score": summary.quality_gate.observed.risk_score,
-                "new_hotspots": summary.quality_gate.observed.new_hotspots,
-            },
-        }
+        payload["quality_gate"] = _quality_gate_to_json(summary.quality_gate)
     if summary.baseline_analysis_id is not None:
         payload["baseline_analysis_id"] = str(summary.baseline_analysis_id)
     if summary.quality_policy is not None:
         payload["quality_policy"] = _quality_policy_to_json(summary.quality_policy)
     if summary.file_insights:
-        payload["file_insights"] = [
-            {
-                "path": insight.path,
-                "hotspot_score": insight.hotspot_score,
-                "metrics": insight.metrics,
-                "risk": _risk_to_json(insight.risk) if insight.risk else None,
-            }
-            for insight in summary.file_insights
-        ]
+        payload["file_insights"] = [_file_insight_to_json(item) for item in summary.file_insights]
     return payload
+
+
+def _quality_gate_to_json(gate: QualityGateResult) -> dict[str, object]:
+    return {
+        "passed": gate.passed,
+        "configured": gate.configured,
+        "failures": [{"code": item.code, "detail": item.detail} for item in gate.failures],
+        "thresholds": {
+            "max_new_critical_findings": gate.thresholds.max_new_critical_findings,
+            "max_risk_score": gate.thresholds.max_risk_score,
+            "max_new_hotspots": gate.thresholds.max_new_hotspots,
+        },
+        "observed": {
+            "new_critical_findings": gate.observed.new_critical_findings,
+            "risk_score": gate.observed.risk_score,
+            "new_hotspots": gate.observed.new_hotspots,
+        },
+    }
+
+
+def _file_insight_to_json(insight: FileInsight) -> dict[str, object]:
+    return {
+        "path": insight.path,
+        "hotspot_score": insight.hotspot_score,
+        "metrics": insight.metrics,
+        "risk": _risk_to_json(insight.risk) if insight.risk else None,
+    }
 
 
 def _summary_from_json(value: Any) -> AnalysisSummary | None:
     if value is None:
         return None
-    gate_payload = value.get("quality_gate")
     return AnalysisSummary(
         analyzed_file_count=int(value["analyzed_file_count"]),
         source_lines=int(value["source_lines"]),
-        finding_count_by_severity={
-            str(key): int(count) for key, count in dict(value["finding_count_by_severity"]).items()
-        },
+        finding_count_by_severity=_finding_counts_from_json(value),
         duration_seconds=float(value["duration_seconds"]),
-        analyzer_outcomes=tuple(
-            AnalyzerOutcome(
-                analyzer=str(item["analyzer"]),
-                tool=str(item.get("tool", item["analyzer"])),
-                version=item.get("version"),
-                status=str(item.get("status", "succeeded")),
-                duration_seconds=float(item.get("duration_seconds", 0.0)),
-                message=item.get("message"),
-                language=item.get("language"),
-                generic=bool(item.get("generic", False)),
-            )
-            for item in value.get("analyzer_outcomes", [])
-        ),
+        analyzer_outcomes=_analyzer_outcomes_from_json(value),
         risk_assessment=_risk_from_json(value.get("risk_assessment")),
-        quality_gate=(
-            QualityGateResult(
-                bool(gate_payload.get("passed")),
-                tuple(
-                    QualityGateFailure(str(item["code"]), str(item["detail"]))
-                    for item in gate_payload.get("failures", [])
-                ),
-                bool(gate_payload.get("configured", True)),
-                thresholds=QualityGateThresholds(
-                    max_new_critical_findings=_optional_int(
-                        gate_payload.get("thresholds", {}).get("max_new_critical_findings")
-                    ),
-                    max_risk_score=_optional_float(
-                        gate_payload.get("thresholds", {}).get("max_risk_score")
-                    ),
-                    max_new_hotspots=_optional_int(
-                        gate_payload.get("thresholds", {}).get("max_new_hotspots")
-                    ),
-                ),
-                observed=QualityGateObserved(
-                    new_critical_findings=int(
-                        gate_payload.get("observed", {}).get("new_critical_findings", 0)
-                    ),
-                    risk_score=_optional_float(gate_payload.get("observed", {}).get("risk_score")),
-                    new_hotspots=int(gate_payload.get("observed", {}).get("new_hotspots", 0)),
-                ),
-            )
-            if gate_payload is not None
-            else None
+        quality_gate=_quality_gate_from_json(value.get("quality_gate")),
+        baseline_analysis_id=_baseline_id_from_json(value),
+        file_insights=_file_insights_from_json(value),
+        quality_policy=_quality_policy_from_summary_json(value),
+    )
+
+
+def _finding_counts_from_json(value: dict[str, Any]) -> dict[str, int]:
+    return {str(key): int(count) for key, count in dict(value["finding_count_by_severity"]).items()}
+
+
+def _analyzer_outcomes_from_json(value: dict[str, Any]) -> tuple[AnalyzerOutcome, ...]:
+    return tuple(
+        AnalyzerOutcome(
+            analyzer=str(item["analyzer"]),
+            tool=str(item.get("tool", item["analyzer"])),
+            version=item.get("version"),
+            status=str(item.get("status", "succeeded")),
+            duration_seconds=float(item.get("duration_seconds", 0.0)),
+            message=item.get("message"),
+            language=item.get("language"),
+            generic=bool(item.get("generic", False)),
+        )
+        for item in value.get("analyzer_outcomes", [])
+    )
+
+
+def _quality_gate_from_json(value: Any) -> QualityGateResult | None:
+    if value is None:
+        return None
+    thresholds = value.get("thresholds", {})
+    observed = value.get("observed", {})
+    return QualityGateResult(
+        bool(value.get("passed")),
+        tuple(
+            QualityGateFailure(str(item["code"]), str(item["detail"]))
+            for item in value.get("failures", [])
         ),
-        baseline_analysis_id=(
-            UUID(str(value["baseline_analysis_id"])) if value.get("baseline_analysis_id") else None
+        bool(value.get("configured", True)),
+        thresholds=QualityGateThresholds(
+            max_new_critical_findings=_optional_int(thresholds.get("max_new_critical_findings")),
+            max_risk_score=_optional_float(thresholds.get("max_risk_score")),
+            max_new_hotspots=_optional_int(thresholds.get("max_new_hotspots")),
         ),
-        file_insights=tuple(
-            FileInsight(
-                path=str(item["path"]),
-                hotspot_score=float(item["hotspot_score"]),
-                risk=_risk_from_json(item.get("risk")),
-                metrics={
-                    str(key): float(metric) for key, metric in dict(item.get("metrics", {})).items()
-                },
-            )
-            for item in value.get("file_insights", [])
-        ),
-        quality_policy=(
-            _quality_policy_from_json(value["quality_policy"])
-            if value.get("quality_policy") is not None
-            else None
+        observed=QualityGateObserved(
+            new_critical_findings=int(observed.get("new_critical_findings", 0)),
+            risk_score=_optional_float(observed.get("risk_score")),
+            new_hotspots=int(observed.get("new_hotspots", 0)),
         ),
     )
+
+
+def _baseline_id_from_json(value: dict[str, Any]) -> UUID | None:
+    baseline = value.get("baseline_analysis_id")
+    return UUID(str(baseline)) if baseline else None
+
+
+def _file_insights_from_json(value: dict[str, Any]) -> tuple[FileInsight, ...]:
+    return tuple(
+        FileInsight(
+            path=str(item["path"]),
+            hotspot_score=float(item["hotspot_score"]),
+            risk=_risk_from_json(item.get("risk")),
+            metrics={
+                str(key): float(metric) for key, metric in dict(item.get("metrics", {})).items()
+            },
+        )
+        for item in value.get("file_insights", [])
+    )
+
+
+def _quality_policy_from_summary_json(value: dict[str, Any]) -> QualityGatePolicy | None:
+    policy = value.get("quality_policy")
+    return _quality_policy_from_json(policy) if policy is not None else None
 
 
 def _risk_to_json(risk: RiskAssessment) -> dict[str, object]:

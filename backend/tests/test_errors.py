@@ -1,11 +1,20 @@
-from typing import Annotated
+from typing import Annotated, Final
 
 from fastapi import Body, HTTPException
 from fastapi.testclient import TestClient
+from httpx import Response
 
 from codepilot.core.errors import ApplicationError
 from codepilot.core.settings import Settings
 from codepilot.main import create_app
+
+_ERROR_REQUESTS: Final[tuple[tuple[str, str, dict[str, str] | None], ...]] = (
+    ("post", "/test/validation-error", {"value": "wrong"}),
+    ("get", "/test/application-error", None),
+    ("get", "/missing", None),
+    ("get", "/test/unexpected-error", None),
+    ("get", "/test/http-error", None),
+)
 
 
 def _client() -> TestClient:
@@ -48,28 +57,42 @@ def test_invalid_correlation_id_is_replaced() -> None:
     assert len(correlation_id) == 36
 
 
-def test_all_error_classes_have_stable_contract_and_correlation() -> None:
+def _error_responses() -> list[Response]:
     with _client() as client:
-        responses = [
-            client.post("/test/validation-error", json={"value": "wrong"}),
-            client.get("/test/application-error"),
-            client.get("/missing"),
-            client.get("/test/unexpected-error"),
-            client.get("/test/http-error"),
-        ]
+        responses = []
+        for method, path, payload in _ERROR_REQUESTS:
+            request = getattr(client, method)
+            responses.append(request(path, json=payload) if payload else request(path))
 
+    return responses
+
+
+def _assert_error_contract(responses: list[Response]) -> None:
     assert [response.status_code for response in responses] == [422, 400, 404, 500, 418]
     for response in responses:
         payload = response.json()
         assert set(payload) == {"error"}
         assert set(payload["error"]) >= {"code", "message", "correlation_id"}
         assert response.headers["X-Correlation-ID"] == payload["error"]["correlation_id"]
-    assert responses[0].json()["error"]["details"][0]["location"] == ["body"]
-    assert "wrong" not in responses[0].text
-    assert "private exception secret" not in responses[3].text
-    assert responses[3].json()["error"]["message"] == "An unexpected error occurred."
-    assert "secret detail must not be exposed" not in responses[4].text
-    assert responses[4].json()["error"]["message"] == "HTTP request failed."
+
+
+def test_all_error_classes_have_stable_contract_and_correlation() -> None:
+    _assert_error_contract(_error_responses())
+
+
+def test_validation_errors_have_safe_details() -> None:
+    validation = _error_responses()[0]
+    assert validation.json()["error"]["details"][0]["location"] == ["body"]
+    assert "wrong" not in validation.text
+
+
+def test_unexpected_and_http_errors_hide_secrets() -> None:
+    responses = _error_responses()
+    unexpected, http_error = responses[3], responses[4]
+    assert "private exception secret" not in unexpected.text
+    assert unexpected.json()["error"]["message"] == "An unexpected error occurred."
+    assert "secret detail must not be exposed" not in http_error.text
+    assert http_error.json()["error"]["message"] == "HTTP request failed."
 
 
 def test_http_exception_messages_are_safe_and_status_specific() -> None:

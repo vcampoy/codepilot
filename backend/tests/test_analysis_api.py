@@ -9,6 +9,7 @@ from uuid import UUID
 
 import pytest
 from fastapi.testclient import TestClient
+from httpx import Response
 from pydantic import SecretStr
 
 from codepilot.analyzers.risk_score import RiskScoreConfig, calculate_risk
@@ -234,7 +235,7 @@ def test_findings_endpoint_returns_persisted_findings_and_summary_outcomes() -> 
     assert summary.json()["summary"]["analyzer_outcomes"][0]["analyzer"] == "generic.file-metrics"
 
 
-def test_insights_endpoints_expose_risk_hotspot_and_file_detail() -> None:
+def _request_insights_endpoints() -> tuple[Response, Response, Response]:
     repository = InMemoryAnalysisRepository()
     service = AnalysisService(repository, ApiIngestion(), InsightsAnalyzer(), ApiQueue([]))
     with TestClient(create_app(analysis_service=service)) as client:
@@ -251,6 +252,12 @@ def test_insights_endpoints_expose_risk_hotspot_and_file_detail() -> None:
             params={"path": "src/main.py"},
         )
 
+    return summary, hotspots, detail
+
+
+def test_insights_summary_exposes_risk_and_quality_gate() -> None:
+    summary, _, _ = _request_insights_endpoints()
+
     assert summary.json()["summary"]["risk_assessment"]["score"] == 0.4
     assert summary.json()["summary"]["quality_gate"]["passed"] is True
     assert summary.json()["summary"]["quality_gate"]["configured"] is False
@@ -265,7 +272,17 @@ def test_insights_endpoints_expose_risk_hotspot_and_file_detail() -> None:
         "max_risk_score": None,
         "max_new_hotspots": None,
     }
+
+
+def test_insights_hotspots_endpoint_exposes_ranked_file() -> None:
+    _, hotspots, _ = _request_insights_endpoints()
+
     assert hotspots.json()[0]["path"] == "src/main.py"
+
+
+def test_insights_file_detail_endpoint_exposes_findings() -> None:
+    _, _, detail = _request_insights_endpoints()
+
     assert detail.json()["path"] == "src/main.py"
     assert len(detail.json()["findings"]) == 1
 

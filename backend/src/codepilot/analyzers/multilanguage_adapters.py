@@ -126,24 +126,47 @@ def _load_sarif_document(payload: str | bytes, max_bytes: int, max_depth: int) -
 
 
 def _parse_sarif_result(result: dict[str, Any], analyzer: str) -> NormalizedFinding:
-    location = (result.get("locations") or [{}])[0].get("physicalLocation", {})
-    artifact = location.get("artifactLocation", {})
-    region = location.get("region", {})
-    start_line = int(region.get("startLine") or 1)
+    artifact, region = _sarif_location(result)
+    start_line = _sarif_start_line(region)
     return NormalizedFinding(
         analyzer=analyzer,
         rule_id=str(result.get("ruleId") or "SARIF"),
-        severity={"error": "error", "warning": "warning", "note": "info"}.get(
-            str(result.get("level", "warning")), "info"
-        ),
-        category="security" if analyzer.lower() == "roslyn" else "quality",
+        severity=_sarif_severity(result),
+        category=_sarif_category(analyzer),
         title=str(result.get("ruleId") or "SARIF finding"),
         description=str(result.get("message", {}).get("text", "SARIF finding")),
         path=Path(str(artifact.get("uri") or "<unknown>")).as_posix(),
         start_line=start_line,
-        end_line=int(region.get("endLine") or start_line),
-        evidence=str((result.get("fingerprints") or {}).get("primaryLocationLineHash", "")) or None,
+        end_line=_sarif_end_line(region, start_line),
+        evidence=_sarif_evidence(result),
     )
+
+
+def _sarif_location(result: dict[str, Any]) -> tuple[dict[str, Any], dict[str, Any]]:
+    location = (result.get("locations") or [{}])[0].get("physicalLocation", {})
+    return location.get("artifactLocation", {}), location.get("region", {})
+
+
+def _sarif_start_line(region: dict[str, Any]) -> int:
+    return int(region.get("startLine") or 1)
+
+
+def _sarif_end_line(region: dict[str, Any], start_line: int) -> int:
+    return int(region.get("endLine") or start_line)
+
+
+def _sarif_severity(result: dict[str, Any]) -> str:
+    return {"error": "error", "warning": "warning", "note": "info"}.get(
+        str(result.get("level", "warning")), "info"
+    )
+
+
+def _sarif_category(analyzer: str) -> str:
+    return "security" if analyzer.casefold() == "roslyn" else "quality"
+
+
+def _sarif_evidence(result: dict[str, Any]) -> str | None:
+    return str((result.get("fingerprints") or {}).get("primaryLocationLineHash", "")) or None
 
 
 def _parse_sarif_run(run: dict[str, Any]) -> tuple[NormalizedFinding, ...]:

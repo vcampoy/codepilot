@@ -20,9 +20,12 @@ from codepilot.domain.analysis import (
     AnalysisFinding,
     AnalysisNotFoundError,
     AnalysisRecord,
+    AnalysisSummary,
+    AnalyzerOutcome,
     SourceContext,
 )
 from codepilot.domain.insights import FileInsight, select_hotspots
+from codepilot.domain.quality import QualityGatePolicy
 from codepilot.llm.contracts import EnrichmentResult, EnrichmentTask, LlmError
 from codepilot.services.analysis import (
     AnalysisDeletionConflictError,
@@ -301,84 +304,94 @@ async def analysis_status(analysis_id: UUID, request: Request) -> AnalysisStatus
 @router.get("/{analysis_id}/summary", response_model=AnalysisSummaryResponse)
 async def analysis_summary(analysis_id: UUID, request: Request) -> AnalysisSummaryResponse:
     record = await _get_record(request, analysis_id)
-    summary = record.summary
-    summary_payload: dict[str, object] | None = None
-    if summary is not None:
-        summary_payload = {
-            "analyzed_file_count": summary.analyzed_file_count,
-            "source_lines": summary.source_lines,
-            "finding_count_by_severity": summary.finding_count_by_severity,
-            "duration_seconds": summary.duration_seconds,
-            "analyzer_outcomes": [
-                {
-                    "analyzer": item.analyzer,
-                    "tool": item.tool,
-                    "version": item.version,
-                    "status": item.status,
-                    "duration_seconds": item.duration_seconds,
-                    "message": item.message,
-                    "language": item.language,
-                    "generic": item.generic,
-                }
-                for item in summary.analyzer_outcomes
-            ],
-        }
-        if summary.risk_assessment is not None:
-            summary_payload["risk_assessment"] = _risk_response(
-                summary.risk_assessment
-            ).model_dump()
-        if summary.quality_gate is not None:
-            summary_payload["quality_gate"] = {
-                "passed": summary.quality_gate.passed,
-                "configured": summary.quality_gate.configured,
-                "status": summary.quality_gate.status,
-                "failures": [
-                    {"code": failure.code, "detail": failure.detail}
-                    for failure in summary.quality_gate.failures
-                ],
-                "thresholds": _quality_gate_thresholds_response(summary.quality_gate.thresholds),
-                "observed": _quality_gate_observed_response(summary.quality_gate.observed),
-            }
-        if summary.quality_policy is not None:
-            summary_payload["quality_policy"] = {
-                "version": summary.quality_policy.version,
-                "configured": bool(summary.quality_policy.profiles)
-                or any(
-                    value is not None
-                    for value in (
-                        summary.quality_policy.thresholds.max_new_critical_findings,
-                        summary.quality_policy.thresholds.max_risk_score,
-                        summary.quality_policy.thresholds.max_new_hotspots,
-                    )
-                ),
-                "max_new_critical_findings": summary.quality_policy.thresholds.max_new_critical_findings,
-                "max_risk_score": summary.quality_policy.thresholds.max_risk_score,
-                "max_new_hotspots": summary.quality_policy.thresholds.max_new_hotspots,
-                "profiles": [
-                    {
-                        "language": profile.language,
-                        "rules": [
-                            {
-                                "language": rule.language,
-                                "analyzer": rule.analyzer,
-                                "rule_id": rule.rule_id,
-                                "enabled": rule.enabled,
-                            }
-                            for rule in profile.rules
-                        ],
-                    }
-                    for profile in summary.quality_policy.profiles
-                ],
-            }
-        if summary.baseline_analysis_id is not None:
-            summary_payload["baseline_analysis_id"] = str(summary.baseline_analysis_id)
-        if summary.file_insights:
-            summary_payload["hotspot_count"] = len(select_hotspots(summary.file_insights))
     return AnalysisSummaryResponse(
         analysis_id=record.analysis_id,
         status=record.status.value,
-        summary=summary_payload,
+        summary=_summary_response_payload(record.summary),
     )
+
+
+def _summary_response_payload(summary: AnalysisSummary | None) -> dict[str, object] | None:
+    if summary is None:
+        return None
+    payload: dict[str, object] = {
+        "analyzed_file_count": summary.analyzed_file_count,
+        "source_lines": summary.source_lines,
+        "finding_count_by_severity": summary.finding_count_by_severity,
+        "duration_seconds": summary.duration_seconds,
+        "analyzer_outcomes": [_outcome_payload(item) for item in summary.analyzer_outcomes],
+    }
+    if summary.risk_assessment is not None:
+        payload["risk_assessment"] = _risk_response(summary.risk_assessment).model_dump()
+    if summary.quality_gate is not None:
+        payload["quality_gate"] = _quality_gate_payload(summary)
+    if summary.quality_policy is not None:
+        payload["quality_policy"] = _quality_policy_payload(summary.quality_policy)
+    if summary.baseline_analysis_id is not None:
+        payload["baseline_analysis_id"] = str(summary.baseline_analysis_id)
+    if summary.file_insights:
+        payload["hotspot_count"] = len(select_hotspots(summary.file_insights))
+    return payload
+
+
+def _outcome_payload(item: AnalyzerOutcome) -> dict[str, object]:
+    return {
+        "analyzer": item.analyzer,
+        "tool": item.tool,
+        "version": item.version,
+        "status": item.status,
+        "duration_seconds": item.duration_seconds,
+        "message": item.message,
+        "language": item.language,
+        "generic": item.generic,
+    }
+
+
+def _quality_gate_payload(summary: AnalysisSummary) -> dict[str, object]:
+    gate = summary.quality_gate
+    assert gate is not None
+    return {
+        "passed": gate.passed,
+        "configured": gate.configured,
+        "status": gate.status,
+        "failures": [{"code": failure.code, "detail": failure.detail} for failure in gate.failures],
+        "thresholds": _quality_gate_thresholds_response(gate.thresholds),
+        "observed": _quality_gate_observed_response(gate.observed),
+    }
+
+
+def _quality_policy_payload(policy: QualityGatePolicy) -> dict[str, object]:
+    thresholds = policy.thresholds
+    configured = bool(policy.profiles) or any(
+        value is not None
+        for value in (
+            thresholds.max_new_critical_findings,
+            thresholds.max_risk_score,
+            thresholds.max_new_hotspots,
+        )
+    )
+    return {
+        "version": policy.version,
+        "configured": configured,
+        "max_new_critical_findings": thresholds.max_new_critical_findings,
+        "max_risk_score": thresholds.max_risk_score,
+        "max_new_hotspots": thresholds.max_new_hotspots,
+        "profiles": [
+            {
+                "language": profile.language,
+                "rules": [
+                    {
+                        "language": rule.language,
+                        "analyzer": rule.analyzer,
+                        "rule_id": rule.rule_id,
+                        "enabled": rule.enabled,
+                    }
+                    for rule in profile.rules
+                ],
+            }
+            for profile in policy.profiles
+        ],
+    }
 
 
 @router.get("/{analysis_id}/hotspots", response_model=list[FileInsightResponse])

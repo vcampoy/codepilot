@@ -71,19 +71,30 @@ class PythonImportExtractor:
     def extract(self, path: Path, root: Path) -> tuple[str, ...]:
         if path.suffix != ".py" or path.stat().st_size > 1_000_000:
             return ()
-        try:
-            tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
-        except (OSError, SyntaxError, UnicodeError):
+        tree = _parse_python_file(path)
+        if tree is None:
             return ()
-        modules: set[str] = set()
-        for node in ast.walk(tree):
-            if isinstance(node, ast.Import):
-                modules.update(alias.name for alias in node.names)
-            elif isinstance(node, ast.ImportFrom) and node.module:
-                modules.add(node.module)
+        modules = _python_import_modules(tree)
         return tuple(
             sorted(target for module in modules if (target := _python_target(module, root)))
         )
+
+
+def _parse_python_file(path: Path) -> ast.AST | None:
+    try:
+        return ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+    except (OSError, SyntaxError, UnicodeError):
+        return None
+
+
+def _python_import_modules(tree: ast.AST) -> set[str]:
+    modules: set[str] = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            modules.update(alias.name for alias in node.names)
+        elif isinstance(node, ast.ImportFrom) and node.module:
+            modules.add(node.module)
+    return modules
 
 
 class TypeScriptImportExtractor:

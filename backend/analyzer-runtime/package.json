@@ -2,6 +2,7 @@
   "name": "codepilot-analyzer-runtime",
   "private": true,
   "dependencies": {
+    "@typescript-eslint/eslint-plugin": "8.46.4",
     "@typescript-eslint/parser": "8.46.4",
     "eslint": "9.39.1"
   }

@@ -96,9 +96,7 @@ class QualityGateResult:
     failures: tuple[QualityGateFailure, ...]
     configured: bool = True
     thresholds: QualityGateThresholds = field(default_factory=QualityGateThresholds)
-    observed: QualityGateObserved = field(
-        default_factory=lambda: QualityGateObserved(0, None, 0)
-    )
+    observed: QualityGateObserved = field(default_factory=lambda: QualityGateObserved(0, None, 0))
 
     @property
     def status(self) -> str:
@@ -132,63 +130,19 @@ def evaluate_quality_gates(
     new_hotspot_count: int | None = None,
     enabled_rules: tuple[object, ...] = (),
 ) -> QualityGateResult:
-    failures: list[QualityGateFailure] = []
-    critical = tuple(
-        finding.finding_id
-        for finding in findings
-        if finding.is_new and finding.severity.lower() == "critical"
-    )
-    if (
-        config.max_new_critical_findings is not None
-        and len(critical) > config.max_new_critical_findings
-    ):
-        failures.append(
-            QualityGateFailure(
-                "critical-findings",
-                f"{len(critical)} new critical findings exceed the limit of "
-                f"{config.max_new_critical_findings}.",
-            )
+    critical = _new_critical_findings(findings)
+    enabled_rule_keys = _enabled_rule_keys(enabled_rules)
+    matched_rules = _matching_enabled_rules(findings, enabled_rule_keys)
+    failures = [
+        failure
+        for failure in (
+            _critical_failure(critical, config),
+            _enabled_rules_failure(matched_rules, enabled_rule_keys),
+            _risk_failure(risk_score, config),
+            _hotspot_failure(new_hotspot_count, config),
         )
-    enabled_rule_keys = {
-        (getattr(rule, "analyzer", ""), getattr(rule, "rule_id", ""))
-        for rule in enabled_rules
-    }
-    matched_rules = tuple(
-        finding.finding_id
-        for finding in findings
-        if finding.is_new
-        and finding.analyzer is not None
-        and finding.rule_id is not None
-        and any(
-            finding.rule_id == rule_id
-            and (finding.analyzer == analyzer or finding.analyzer.endswith(f".{analyzer}"))
-            for analyzer, rule_id in enabled_rule_keys
-        )
-    )
-    if enabled_rule_keys and matched_rules:
-        failures.append(
-            QualityGateFailure(
-                "enabled-rules",
-                f"{len(matched_rules)} findings match enabled quality-profile rules.",
-            )
-        )
-    if config.max_risk_score is not None and risk_score > config.max_risk_score:
-        failures.append(
-            QualityGateFailure(
-                "risk-score", f"Risk score {risk_score:.4f} exceeds {config.max_risk_score:.4f}."
-            )
-        )
-    if (
-        config.max_new_hotspots is not None
-        and new_hotspot_count is not None
-        and new_hotspot_count > config.max_new_hotspots
-    ):
-        failures.append(
-            QualityGateFailure(
-                "hotspots",
-                f"{new_hotspot_count} new hotspots exceed the limit of {config.max_new_hotspots}.",
-            )
-        )
+        if failure is not None
+    ]
     observed_hotspots = hotspot_count if new_hotspot_count is None else new_hotspot_count
     configured = any(
         value is not None
@@ -212,6 +166,77 @@ def evaluate_quality_gates(
             risk_score=risk_score,
             new_hotspots=observed_hotspots,
         ),
+    )
+
+
+def _new_critical_findings(findings: tuple[FindingRisk, ...]) -> tuple[str, ...]:
+    return tuple(
+        finding.finding_id
+        for finding in findings
+        if finding.is_new and finding.severity.casefold() == "critical"
+    )
+
+
+def _enabled_rule_keys(enabled_rules: tuple[object, ...]) -> set[tuple[str, str]]:
+    return {(getattr(rule, "analyzer", ""), getattr(rule, "rule_id", "")) for rule in enabled_rules}
+
+
+def _matching_enabled_rules(
+    findings: tuple[FindingRisk, ...], enabled_rule_keys: set[tuple[str, str]]
+) -> tuple[str, ...]:
+    return tuple(
+        finding.finding_id
+        for finding in findings
+        if finding.is_new
+        and finding.analyzer is not None
+        and finding.rule_id is not None
+        and any(
+            finding.rule_id == rule_id
+            and (finding.analyzer == analyzer or finding.analyzer.endswith(f".{analyzer}"))
+            for analyzer, rule_id in enabled_rule_keys
+        )
+    )
+
+
+def _critical_failure(
+    critical: tuple[str, ...], config: QualityGateConfig
+) -> QualityGateFailure | None:
+    limit = config.max_new_critical_findings
+    if limit is None or len(critical) <= limit:
+        return None
+    return QualityGateFailure(
+        "critical-findings",
+        f"{len(critical)} new critical findings exceed the limit of {limit}.",
+    )
+
+
+def _enabled_rules_failure(
+    matched_rules: tuple[str, ...], enabled_rule_keys: set[tuple[str, str]]
+) -> QualityGateFailure | None:
+    if not enabled_rule_keys or not matched_rules:
+        return None
+    return QualityGateFailure(
+        "enabled-rules",
+        f"{len(matched_rules)} findings match enabled quality-profile rules.",
+    )
+
+
+def _risk_failure(risk_score: float, config: QualityGateConfig) -> QualityGateFailure | None:
+    limit = config.max_risk_score
+    if limit is None or risk_score <= limit:
+        return None
+    return QualityGateFailure("risk-score", f"Risk score {risk_score:.4f} exceeds {limit:.4f}.")
+
+
+def _hotspot_failure(
+    new_hotspot_count: int | None, config: QualityGateConfig
+) -> QualityGateFailure | None:
+    limit = config.max_new_hotspots
+    if new_hotspot_count is None or limit is None or new_hotspot_count <= limit:
+        return None
+    return QualityGateFailure(
+        "hotspots",
+        f"{new_hotspot_count} new hotspots exceed the limit of {limit}.",
     )
 
 

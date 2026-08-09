@@ -93,6 +93,20 @@ class GitHistoryService:
         finding_density_by_path: Mapping[str, float] | None = None,
     ) -> GitHistoryMetrics:
         current = now or datetime.now(UTC)
+        output = self._run_log(repository_path)
+        cutoff = current - timedelta(days=self._config.window_days)
+        commits = _group_recent_commits(_parse_log(output), cutoff)
+        return GitHistoryMetrics(
+            _build_history_metrics(
+                commits,
+                current,
+                self._config,
+                complexity_by_path or {},
+                finding_density_by_path or {},
+            )
+        )
+
+    def _run_log(self, repository_path: Path) -> str:
         command = [
             "git",
             "log",
@@ -118,66 +132,108 @@ class GitHistoryService:
             raise GitHistoryError("Git history collection failed.") from error
         if len(completed.stdout.encode("utf-8")) > self._config.max_output_bytes:
             raise GitHistoryError("Git history output exceeded the configured limit.")
-        cutoff = current - timedelta(days=self._config.window_days)
-        commits: dict[str, list[tuple[datetime, str, int]]] = defaultdict(list)
-        for commit_date, author, additions, deletions, path in _parse_log(completed.stdout):
-            if commit_date < cutoff:
-                continue
-            commits[path].append((commit_date, author, additions + deletions))
-        complexity = complexity_by_path or {}
-        finding_density = finding_density_by_path or {}
-        metrics: dict[str, FileHistoryMetric] = {}
-        for path, entries in commits.items():
-            authors = Counter(entry[1] for entry in entries)
-            churn = sum(entry[2] for entry in entries)
-            age = max((current - min(entry[0] for entry in entries)).total_seconds() / 86400, 0)
-            path_complexity = float(complexity.get(path, 0))
-            path_density = float(finding_density.get(path, 0))
-            score = (
-                min(path_complexity / 20, 1.0) * 0.5
-                + min(churn / 100, 1.0) * 0.3
-                + min(path_density / 10, 1.0) * 0.2
-            )
-            metrics[path] = FileHistoryMetric(
-                path=path,
-                commit_count=len(entries),
-                recent_change_frequency=len(entries) / self._config.window_days,
-                author_count=len(authors),
-                ownership_concentration=max(authors.values()) / len(entries),
-                file_age_days=age,
-                recent_churn=churn,
-                complexity=path_complexity,
-                finding_density=path_density,
-                hotspot_score=score,
-                score_explanation=(
-                    f"complexity={path_complexity:.2f}*0.50; "
-                    f"recent_churn={churn}*0.30; finding_density={path_density:.2f}*0.20"
-                ),
-            )
-        return GitHistoryMetrics(metrics)
+        return completed.stdout
 
 
 def _parse_log(output: str) -> list[tuple[datetime, str, int, int, str]]:
     parsed: list[tuple[datetime, str, int, int, str]] = []
     for record in output.split("\x1e"):
-        if not record.strip():
+        header, numstat_lines = _split_log_record(record)
+        if header is None:
             continue
-        lines = record.splitlines()
-        if not lines or "\x1f" not in lines[0]:
-            continue
-        date_text, author = lines[0].split("\x1f", 1)
+        date_text, author = header
         try:
             commit_date = datetime.fromisoformat(date_text).astimezone(UTC)
         except ValueError:
             continue
-        for line in lines[1:]:
-            parts = line.split("\t", 2)
-            if len(parts) != 3 or not parts[2]:
-                continue
+        parsed.extend(_parse_numstat_lines(commit_date, author, numstat_lines))
+    return parsed
+
+
+def _split_log_record(record: str) -> tuple[tuple[str, str] | None, list[str]]:
+    if not record.strip():
+        return None, []
+    lines = record.splitlines()
+    if not lines or "\x1f" not in lines[0]:
+        return None, []
+    date_text, author = lines[0].split("\x1f", 1)
+    return (date_text, author), lines[1:]
+
+
+def _parse_numstat_lines(
+    commit_date: datetime, author: str, lines: list[str]
+) -> list[tuple[datetime, str, int, int, str]]:
+    parsed: list[tuple[datetime, str, int, int, str]] = []
+    for line in lines:
+        parts = line.split("\t", 2)
+        if len(parts) != 3 or not parts[2]:
+            continue
+        try:
             additions = 0 if parts[0] == "-" else int(parts[0])
             deletions = 0 if parts[1] == "-" else int(parts[1])
-            parsed.append((commit_date, author, additions, deletions, _normalize_rename(parts[2])))
+        except ValueError:
+            continue
+        parsed.append((commit_date, author, additions, deletions, _normalize_rename(parts[2])))
     return parsed
+
+
+def _group_recent_commits(
+    entries: list[tuple[datetime, str, int, int, str]], cutoff: datetime
+) -> dict[str, list[tuple[datetime, str, int]]]:
+    commits: dict[str, list[tuple[datetime, str, int]]] = defaultdict(list)
+    for commit_date, author, additions, deletions, path in entries:
+        if commit_date >= cutoff:
+            commits[path].append((commit_date, author, additions + deletions))
+    return commits
+
+
+def _build_history_metrics(
+    commits: dict[str, list[tuple[datetime, str, int]]],
+    current: datetime,
+    config: GitHistoryConfig,
+    complexity: Mapping[str, float],
+    finding_density: Mapping[str, float],
+) -> dict[str, FileHistoryMetric]:
+    return {
+        path: _metric_for_path(path, entries, current, config, complexity, finding_density)
+        for path, entries in commits.items()
+    }
+
+
+def _metric_for_path(
+    path: str,
+    entries: list[tuple[datetime, str, int]],
+    current: datetime,
+    config: GitHistoryConfig,
+    complexity: Mapping[str, float],
+    finding_density: Mapping[str, float],
+) -> FileHistoryMetric:
+    authors = Counter(entry[1] for entry in entries)
+    churn = sum(entry[2] for entry in entries)
+    age = max((current - min(entry[0] for entry in entries)).total_seconds() / 86400, 0)
+    path_complexity = float(complexity.get(path, 0))
+    path_density = float(finding_density.get(path, 0))
+    score = (
+        min(path_complexity / 20, 1.0) * 0.5
+        + min(churn / 100, 1.0) * 0.3
+        + min(path_density / 10, 1.0) * 0.2
+    )
+    return FileHistoryMetric(
+        path,
+        len(entries),
+        len(entries) / config.window_days,
+        len(authors),
+        max(authors.values()) / len(entries),
+        age,
+        churn,
+        path_complexity,
+        path_density,
+        score,
+        (
+            f"complexity={path_complexity:.2f}*0.50; recent_churn={churn}*0.30; "
+            f"finding_density={path_density:.2f}*0.20"
+        ),
+    )
 
 
 def _normalize_rename(path: str) -> str:

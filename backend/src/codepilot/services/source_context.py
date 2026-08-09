@@ -23,31 +23,45 @@ def capture_source_context(repository_root: Path, finding: AnalysisFinding) -> S
     Only the bounded excerpt is persisted; the cloned worktree is never retained.
     """
     root = repository_root.resolve()
-    normalized = finding.path.replace("\\", "/")
-    candidate = Path(normalized)
-    path = (candidate if candidate.is_absolute() else root / candidate).resolve()
-    try:
-        path.relative_to(root)
-    except ValueError:
+    path = _safe_finding_path(root, finding.path)
+    if path is None or _is_sensitive_filename(path.name):
         return None
-    if _is_sensitive_filename(path.name):
+    lines = _read_source_lines(path)
+    if lines is None:
         return None
-    try:
-        if not path.is_file() or path.stat().st_size > _MAX_FILE_BYTES:
-            return None
-        raw = path.read_bytes()
-        if b"\x00" in raw:
-            return None
-        text = raw.decode("utf-8")
-    except (OSError, UnicodeDecodeError):
-        return None
-    lines = text.splitlines()
     if not lines:
         return None
     if finding.start_line < 1 or finding.end_line < finding.start_line:
         return None
     if finding.start_line > len(lines):
         return None
+    return _build_source_context(lines, finding)
+
+
+def _safe_finding_path(root: Path, finding_path: str) -> Path | None:
+    normalized = finding_path.replace("\\", "/")
+    candidate = Path(normalized)
+    path = (candidate if candidate.is_absolute() else root / candidate).resolve()
+    try:
+        path.relative_to(root)
+    except ValueError:
+        return None
+    return path
+
+
+def _read_source_lines(path: Path) -> list[str] | None:
+    try:
+        if not path.is_file() or path.stat().st_size > _MAX_FILE_BYTES:
+            return None
+        raw = path.read_bytes()
+        if b"\x00" in raw:
+            return None
+        return raw.decode("utf-8").splitlines()
+    except (OSError, UnicodeDecodeError):
+        return None
+
+
+def _build_source_context(lines: list[str], finding: AnalysisFinding) -> SourceContext | None:
     requested_start = max(1, finding.start_line - _CONTEXT_LINES)
     requested_end = min(len(lines), finding.end_line + _CONTEXT_LINES)
     selected: list[SourceLine] = []
@@ -59,9 +73,7 @@ def capture_source_context(repository_root: Path, finding: AnalysisFinding) -> S
         encoded_size = len(line.encode("utf-8"))
         if total_bytes + encoded_size > _MAX_FRAGMENT_BYTES:
             return None
-        selected.append(
-            SourceLine(number, line, finding.start_line <= number <= finding.end_line)
-        )
+        selected.append(SourceLine(number, line, finding.start_line <= number <= finding.end_line))
         total_bytes += encoded_size
     return SourceContext(requested_start, requested_end, tuple(selected))
 

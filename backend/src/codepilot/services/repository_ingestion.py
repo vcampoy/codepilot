@@ -18,7 +18,7 @@ from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Final, Protocol
-from urllib.parse import urlsplit
+from urllib.parse import SplitResult, urlsplit
 
 from codepilot.core.settings import Settings
 
@@ -319,18 +319,25 @@ def _parse_public_repository_hostname(url: str) -> str:
         port = parsed.port
     except ValueError as error:
         raise UnsupportedRepositoryUrlError() from error
-    if (
-        parsed.scheme.casefold() != "https"
-        or not hostname
-        or parsed.username is not None
-        or parsed.password is not None
-        or parsed.query
-        or parsed.fragment
-        or parsed.path in {"", "/"}
-        or port not in {None, 443}
-    ):
+    if not _is_supported_repository_url(parsed, hostname, port):
         raise UnsupportedRepositoryUrlError()
+    assert hostname is not None
     return hostname.rstrip(".").casefold()
+
+
+def _is_supported_repository_url(
+    parsed: SplitResult, hostname: str | None, port: int | None
+) -> bool:
+    return (
+        parsed.scheme.casefold() == "https"
+        and hostname is not None
+        and parsed.username is None
+        and parsed.password is None
+        and not parsed.query
+        and not parsed.fragment
+        and parsed.path not in {"", "/"}
+        and port in {None, 443}
+    )
 
 
 def _validate_public_repository_hostname(hostname: str) -> None:
@@ -384,10 +391,10 @@ def _iter_files(root: Path, *, include_git: bool) -> Iterator[Path]:
         with os.scandir(root) as entries:
             for entry in entries:
                 path = Path(entry.path)
-                if entry.is_symlink():
+                if _skip_entry(entry):
                     continue
                 if entry.is_dir(follow_symlinks=False):
-                    if not include_git and entry.name in _IGNORED_DIRECTORY_NAMES:
+                    if _skip_directory(entry.name, include_git):
                         continue
                     yield from _iter_files(path, include_git=include_git)
                     continue
@@ -400,6 +407,14 @@ def _iter_files(root: Path, *, include_git: bool) -> Iterator[Path]:
         raise RepositoryInspectionError() from error
 
 
+def _skip_entry(entry: os.DirEntry[str]) -> bool:
+    return entry.is_symlink()
+
+
+def _skip_directory(name: str, include_git: bool) -> bool:
+    return not include_git and name in _IGNORED_DIRECTORY_NAMES
+
+
 def _measure_storage(
     root: Path,
     *,
@@ -410,21 +425,38 @@ def _measure_storage(
     file_count = 0
     try:
         for path in _iter_files(root, include_git=True):
-            try:
-                size = path.stat().st_size
-            except OSError as error:
-                raise RepositoryInspectionError() from error
+            size = _file_size(path)
             total_bytes += size
-            relative_parts = path.relative_to(root).parts
-            if not relative_parts or relative_parts[0] != ".git":
+            if _counts_storage_file(path, root):
                 file_count += 1
-            if max_repository_bytes is not None and total_bytes > max_repository_bytes:
-                raise RepositorySizeLimitError()
-            if max_file_count is not None and file_count > max_file_count:
-                raise RepositoryFileCountLimitError()
+            _enforce_storage_limits(total_bytes, file_count, max_repository_bytes, max_file_count)
     except (OSError, RecursionError) as error:
         raise RepositoryInspectionError() from error
     return total_bytes, file_count
+
+
+def _file_size(path: Path) -> int:
+    try:
+        return path.stat().st_size
+    except OSError as error:
+        raise RepositoryInspectionError() from error
+
+
+def _counts_storage_file(path: Path, root: Path) -> bool:
+    relative_parts = path.relative_to(root).parts
+    return bool(relative_parts) and relative_parts[0] != ".git"
+
+
+def _enforce_storage_limits(
+    total_bytes: int,
+    file_count: int,
+    max_repository_bytes: int | None,
+    max_file_count: int | None,
+) -> None:
+    if max_repository_bytes is not None and total_bytes > max_repository_bytes:
+        raise RepositorySizeLimitError()
+    if max_file_count is not None and file_count > max_file_count:
+        raise RepositoryFileCountLimitError()
 
 
 def _inspect_worktree(root: Path) -> tuple[int, int, tuple[str, ...]]:
@@ -678,25 +710,17 @@ class SubprocessGitClient:
             raise RepositoryCloneError() from error
 
         communicate_task = asyncio.create_task(process.wait())
-        deadline = time.monotonic() + timeout_seconds
         try:
-            while not communicate_task.done():
-                if cancellation_event is not None and cancellation_event.is_set():
-                    await self._stop_process_tree(process, communicate_task)
-                    raise RepositoryCancelledError()
-                if time.monotonic() >= deadline:
-                    await self._stop_process_tree(process, communicate_task)
-                    raise RepositoryTimeoutError()
-                try:
-                    _measure_storage(
-                        working_directory,
-                        max_repository_bytes=max_repository_bytes,
-                        max_file_count=max_file_count,
-                    )
-                except (RepositorySizeLimitError, RepositoryFileCountLimitError):
-                    await self._stop_process_tree(process, communicate_task)
-                    raise
-                await asyncio.sleep(monitor_interval_seconds)
+            await self._monitor_clone_process(
+                process,
+                communicate_task,
+                working_directory,
+                timeout_seconds,
+                max_repository_bytes,
+                max_file_count,
+                cancellation_event,
+                monitor_interval_seconds,
+            )
             await communicate_task
         except asyncio.CancelledError:
             await self._stop_process_tree(process, communicate_task)
@@ -708,73 +732,128 @@ class SubprocessGitClient:
         if process.returncode != 0:
             raise RepositoryCloneError()
 
+    async def _monitor_clone_process(
+        self,
+        process: asyncio.subprocess.Process,
+        communicate_task: asyncio.Task[Any],
+        working_directory: Path,
+        timeout_seconds: float,
+        max_repository_bytes: int,
+        max_file_count: int,
+        cancellation_event: asyncio.Event | None,
+        monitor_interval_seconds: float,
+    ) -> None:
+        deadline = time.monotonic() + timeout_seconds
+        while not communicate_task.done():
+            if cancellation_event is not None and cancellation_event.is_set():
+                await self._stop_process_tree(process, communicate_task)
+                raise RepositoryCancelledError()
+            if time.monotonic() >= deadline:
+                await self._stop_process_tree(process, communicate_task)
+                raise RepositoryTimeoutError()
+            try:
+                _measure_storage(
+                    working_directory,
+                    max_repository_bytes=max_repository_bytes,
+                    max_file_count=max_file_count,
+                )
+            except (RepositorySizeLimitError, RepositoryFileCountLimitError):
+                await self._stop_process_tree(process, communicate_task)
+                raise
+            await asyncio.sleep(monitor_interval_seconds)
+
     @staticmethod
     async def _stop_process_tree(
         process: asyncio.subprocess.Process, communicate_task: asyncio.Task[Any]
     ) -> None:
-        termination_failed = False
-        if process.returncode is None:
-            try:
-                await _terminate_process_tree(process, force=False)
-                await asyncio.wait_for(process.wait(), timeout=0.5)
-            except (OSError, TimeoutError):
-                try:
-                    await _terminate_process_tree(process, force=True)
-                    await asyncio.wait_for(process.wait(), timeout=0.5)
-                except (OSError, TimeoutError):
-                    try:
-                        process.kill()
-                        await asyncio.wait_for(process.wait(), timeout=0.5)
-                    except (OSError, TimeoutError):
-                        termination_failed = True
-        if not communicate_task.done():
-            _close_process_stdout(process)
-            try:
-                await asyncio.wait_for(asyncio.shield(communicate_task), timeout=0.5)
-            except TimeoutError:
-                communicate_task.cancel()
-                try:
-                    await asyncio.wait_for(asyncio.shield(communicate_task), timeout=0.5)
-                except (TimeoutError, asyncio.CancelledError):
-                    termination_failed = True
+        termination_failed = await _terminate_process(process)
+        termination_failed = (
+            await _drain_process_task(process, communicate_task)
+        ) or termination_failed
         _close_process_transport(process)
-        if process.returncode is None:
-            termination_failed = True
-        if termination_failed:
+        if process.returncode is None or termination_failed:
             raise RepositoryProcessTerminationError()
+
+
+async def _terminate_process(process: asyncio.subprocess.Process) -> bool:
+    if process.returncode is not None:
+        return False
+    try:
+        await _terminate_process_tree(process, force=False)
+        await asyncio.wait_for(process.wait(), timeout=0.5)
+        return False
+    except (OSError, TimeoutError):
+        return await _force_terminate_process(process)
+
+
+async def _force_terminate_process(process: asyncio.subprocess.Process) -> bool:
+    try:
+        await _terminate_process_tree(process, force=True)
+        await asyncio.wait_for(process.wait(), timeout=0.5)
+        return False
+    except (OSError, TimeoutError):
+        try:
+            process.kill()
+            await asyncio.wait_for(process.wait(), timeout=0.5)
+            return False
+        except (OSError, TimeoutError):
+            return True
+
+
+async def _drain_process_task(
+    process: asyncio.subprocess.Process, communicate_task: asyncio.Task[Any]
+) -> bool:
+    if communicate_task.done():
+        return False
+    _close_process_stdout(process)
+    try:
+        await asyncio.wait_for(asyncio.shield(communicate_task), timeout=0.5)
+        return False
+    except TimeoutError:
+        communicate_task.cancel()
+        try:
+            await asyncio.wait_for(asyncio.shield(communicate_task), timeout=0.5)
+            return False
+        except (TimeoutError, asyncio.CancelledError):
+            return True
 
 
 async def _terminate_process_tree(process: asyncio.subprocess.Process, *, force: bool) -> None:
     if process.returncode is not None:
         return
     if os.name == "nt":
-        arguments = ["taskkill", "/PID", str(process.pid), "/T"]
-        if force:
-            arguments.append("/F")
-        try:
-            killer = await asyncio.create_subprocess_exec(
-                *arguments,
-                stdout=asyncio.subprocess.DEVNULL,
-                stderr=asyncio.subprocess.DEVNULL,
-                creationflags=subprocess.CREATE_NO_WINDOW,
-            )
-            await asyncio.wait_for(killer.wait(), timeout=0.5)
-        except (OSError, TimeoutError):
-            if force:
-                process.kill()
+        await _terminate_windows_process(process, force)
     else:
-        killpg = getattr(os, "killpg", None)
-        if not callable(killpg):
-            if force:
-                process.kill()
-            else:
-                process.terminate()
-            return
-        signal_to_send = getattr(signal, "SIGKILL", signal.SIGTERM) if force else signal.SIGTERM
-        try:
-            killpg(process.pid, signal_to_send)
-        except ProcessLookupError:
-            return
+        _terminate_posix_process(process, force)
+
+
+async def _terminate_windows_process(process: asyncio.subprocess.Process, force: bool) -> None:
+    arguments = ["taskkill", "/PID", str(process.pid), "/T"]
+    if force:
+        arguments.append("/F")
+    try:
+        killer = await asyncio.create_subprocess_exec(
+            *arguments,
+            stdout=asyncio.subprocess.DEVNULL,
+            stderr=asyncio.subprocess.DEVNULL,
+            creationflags=subprocess.CREATE_NO_WINDOW,
+        )
+        await asyncio.wait_for(killer.wait(), timeout=0.5)
+    except (OSError, TimeoutError):
+        if force:
+            process.kill()
+
+
+def _terminate_posix_process(process: asyncio.subprocess.Process, force: bool) -> None:
+    killpg = getattr(os, "killpg", None)
+    if not callable(killpg):
+        process.kill() if force else process.terminate()
+        return
+    signal_to_send = getattr(signal, "SIGKILL", signal.SIGTERM) if force else signal.SIGTERM
+    try:
+        killpg(process.pid, signal_to_send)
+    except ProcessLookupError:
+        return
 
 
 def _close_process_stdout(process: asyncio.subprocess.Process) -> None:

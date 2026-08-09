@@ -248,26 +248,26 @@ def _result_text(data: dict[str, Any]) -> str:
 def _normalize_completion(raw: Any, model: str, provider: str) -> ProviderCompletion:
     if isinstance(raw, ProviderCompletion):
         return raw
-    choices = raw.get("choices") if isinstance(raw, dict) else getattr(raw, "choices", None)
+    choices = _raw_field(raw, "choices")
     if not choices:
         raise LlmProviderError("Provider returned no choices.")
     first = choices[0]
-    message = first.get("message") if isinstance(first, dict) else getattr(first, "message", None)
-    content = (
-        message.get("content") if isinstance(message, dict) else getattr(message, "content", None)
-    )
-    usage_raw = raw.get("usage") if isinstance(raw, dict) else getattr(raw, "usage", None)
+    message = _raw_field(first, "message")
+    content = _raw_field(message, "content")
+    usage_raw = _raw_field(raw, "usage")
     usage = _normalize_usage(usage_raw)
     return ProviderCompletion(
         content=str(content),
-        model=str(
-            getattr(raw, "model", None)
-            or (raw.get("model") if isinstance(raw, dict) else model)
-            or model
-        ),
+        model=str(_raw_field(raw, "model") or model),
         provider=provider,
         usage=usage,
     )
+
+
+def _raw_field(value: Any, name: str) -> Any:
+    if isinstance(value, dict):
+        return value.get(name)
+    return getattr(value, name, None)
 
 
 def _normalize_usage(raw: Any) -> LlmUsage:

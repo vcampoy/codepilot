@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from typing import Final
+
 from codepilot.analyzers.risk_score import (
     FindingRisk,
     QualityGateConfig,
@@ -7,6 +9,14 @@ from codepilot.analyzers.risk_score import (
     calculate_risk,
     evaluate_quality_gates,
 )
+
+_EXPECTED_QUALITY_GATE_PROJECTION: Final[dict[str, object]] = {
+    "passed": False,
+    "failure_codes": frozenset({"critical-findings", "risk-score", "hotspots"}),
+    "failure_details": (),
+    "thresholds": (0, 0.7, 3),
+    "observed": (1, 0.8, 4),
+}
 
 
 def test_risk_score_is_reconstructable_and_weight_changes_are_predictable() -> None:
@@ -44,19 +54,24 @@ def test_quality_gates_prioritize_new_findings_and_explain_failures() -> None:
         ),
         new_hotspot_count=4,
     )
-    assert not result.passed
-    assert {failure.code for failure in result.failures} == {
-        "critical-findings",
-        "risk-score",
-        "hotspots",
+    projection = {
+        "passed": result.passed,
+        "failure_codes": frozenset(failure.code for failure in result.failures),
+        "failure_details": tuple(
+            failure.detail for failure in result.failures if failure.detail == "legacy-critical"
+        ),
+        "thresholds": (
+            result.thresholds.max_new_critical_findings,
+            result.thresholds.max_risk_score,
+            result.thresholds.max_new_hotspots,
+        ),
+        "observed": (
+            result.observed.new_critical_findings,
+            result.observed.risk_score,
+            result.observed.new_hotspots,
+        ),
     }
-    assert "legacy-critical" not in {failure.detail for failure in result.failures}
-    assert result.thresholds.max_new_critical_findings == 0
-    assert result.thresholds.max_risk_score == 0.7
-    assert result.thresholds.max_new_hotspots == 3
-    assert result.observed.new_critical_findings == 1
-    assert result.observed.risk_score == 0.8
-    assert result.observed.new_hotspots == 4
+    assert projection == _EXPECTED_QUALITY_GATE_PROJECTION
 
 
 def test_empty_components_have_zero_risk_without_fake_precision() -> None:

@@ -58,7 +58,9 @@ def test_quality_policy_api_is_tenant_safe() -> None:
         cast(Any, object()),
     )
     client = TestClient(create_app(analysis_service=service))
-    project = asyncio.run(repository.get_or_create_project("https://github.com/acme/quality.git", "team-a"))
+    project = asyncio.run(
+        repository.get_or_create_project("https://github.com/acme/quality.git", "team-a")
+    )
     with client:
         response = client.put(
             f"/api/v1/projects/{project.project_id}/quality-policy",
@@ -72,5 +74,3 @@ def test_quality_policy_api_is_tenant_safe() -> None:
     assert response.status_code == 200
     assert response.json()["max_risk_score"] == 0.4
     assert hidden.json()["configured"] is False
-
-

@@ -9,7 +9,7 @@ import time
 from collections.abc import Sequence
 from contextlib import AbstractAsyncContextManager, suppress
 from datetime import UTC, datetime
-from typing import Protocol
+from typing import Protocol, cast
 from uuid import UUID
 
 from sqlalchemy.exc import DBAPIError, OperationalError
@@ -279,59 +279,9 @@ class AnalysisService:
         completed = False
         try:
             async with self._ingestion.ingest(record.repository_url) as snapshot:
-                result = await self._analyzer.analyze(snapshot)
-                enriched_findings = await asyncio.to_thread(
-                    enrich_findings_with_source_context,
-                    snapshot.repository_path,
-                    result.findings,
-                )
-                result = AnalysisResult(
-                    result.analyzed_file_count,
-                    result.source_lines,
-                    enriched_findings,
-                    result.analyzer_outcomes,
-                    result.enforce_execution,
-                    result.file_insights,
-                )
-                if result.enforce_execution and not result.execution_succeeded:
-                    raise NoAnalyzerExecutedError("No required analyzer could execute.")
-                await self._repository.persist_findings(
-                    analysis_id, result.findings, lease_token=lease_token
-                )
-                await self._repository.persist_file_insights(
-                    analysis_id, result.file_insights, lease_token=lease_token
-                )
-                stored_findings = await self._repository.get_findings(analysis_id)
-                baseline = await self._repository.find_latest_completed(
-                    record.repository_url,
-                    record.workspace_id,
-                    before=record.created_at,
-                    exclude_analysis_id=analysis_id,
-                )
-                baseline_findings = (
-                    await self._repository.get_findings(baseline.analysis_id)
-                    if baseline is not None
-                    else ()
-                )
-                get_policy = getattr(self._repository, "get_quality_policy", None)
-                policy = (
-                    await get_policy(record.project_id, record.workspace_id)
-                    if record.project_id is not None and get_policy is not None
-                    else None
-                )
-                summary = _build_summary(
-                    result,
-                    stored_findings,
-                    time.perf_counter() - started,
-                    quality_gate_config=policy.thresholds if policy else self._quality_gate_config,
-                    quality_policy=policy,
-                    baseline_analysis_id=baseline.analysis_id if baseline else None,
-                    baseline_findings=baseline_findings,
-                    baseline_hotspot_paths=(
-                        tuple(item.path for item in select_hotspots(baseline.summary.file_insights))
-                        if baseline and baseline.summary
-                        else ()
-                    ),
+                result = await self._analyze_snapshot(snapshot)
+                summary = await self._persist_and_summarize(
+                    analysis_id, record, lease_token, result, started
                 )
                 await self._repository.complete(
                     analysis_id,
@@ -372,6 +322,68 @@ class AnalysisService:
                 extra={"analysis_id": str(analysis_id), "error_type": type(error).__name__},
             )
             raise classified from error
+
+    async def _analyze_snapshot(self, snapshot: RepositorySnapshot) -> AnalysisResult:
+        result = await self._analyzer.analyze(snapshot)
+        enriched_findings = await asyncio.to_thread(
+            enrich_findings_with_source_context,
+            snapshot.repository_path,
+            result.findings,
+        )
+        enriched = AnalysisResult(
+            result.analyzed_file_count,
+            result.source_lines,
+            enriched_findings,
+            result.analyzer_outcomes,
+            result.enforce_execution,
+            result.file_insights,
+        )
+        if enriched.enforce_execution and not enriched.execution_succeeded:
+            raise NoAnalyzerExecutedError("No required analyzer could execute.")
+        return enriched
+
+    async def _persist_and_summarize(
+        self,
+        analysis_id: UUID,
+        record: AnalysisRecord,
+        lease_token: UUID,
+        result: AnalysisResult,
+        started: float,
+    ) -> AnalysisSummary:
+        await self._repository.persist_findings(
+            analysis_id, result.findings, lease_token=lease_token
+        )
+        await self._repository.persist_file_insights(
+            analysis_id, result.file_insights, lease_token=lease_token
+        )
+        stored_findings = await self._repository.get_findings(analysis_id)
+        baseline = await self._repository.find_latest_completed(
+            record.repository_url,
+            record.workspace_id,
+            before=record.created_at,
+            exclude_analysis_id=analysis_id,
+        )
+        baseline_findings = (
+            await self._repository.get_findings(baseline.analysis_id) if baseline else ()
+        )
+        policy = await self._quality_policy(record)
+        return _build_summary(
+            result,
+            stored_findings,
+            time.perf_counter() - started,
+            quality_gate_config=policy.thresholds if policy else self._quality_gate_config,
+            quality_policy=policy,
+            baseline_analysis_id=baseline.analysis_id if baseline else None,
+            baseline_findings=baseline_findings,
+            baseline_hotspot_paths=_baseline_hotspots(baseline),
+        )
+
+    async def _quality_policy(self, record: AnalysisRecord) -> QualityGatePolicy | None:
+        get_policy = getattr(self._repository, "get_quality_policy", None)
+        if record.project_id is None or get_policy is None:
+            return None
+        policy = await get_policy(record.project_id, record.workspace_id)
+        return cast(QualityGatePolicy | None, policy)
 
     async def _heartbeat_loop(self, analysis_id: UUID, lease_token: UUID) -> None:
         interval = max(self._lease_seconds / 3, 0.1)
@@ -468,6 +480,12 @@ class AnalysisService:
             "analysis_failed",
             extra={"analysis_id": str(analysis_id), "error_type": type(error).__name__},
         )
+
+
+def _baseline_hotspots(baseline: AnalysisRecord | None) -> tuple[str, ...]:
+    if baseline is None or baseline.summary is None:
+        return ()
+    return tuple(item.path for item in select_hotspots(baseline.summary.file_insights))
 
 
 def _build_summary(

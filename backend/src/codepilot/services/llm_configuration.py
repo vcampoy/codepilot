@@ -51,33 +51,38 @@ class LlmConfigurationService:
         model: str,
         api_key: str | None,
     ) -> LlmConfigurationView:
-        provider = provider.strip().lower()
-        model = model.strip()
-        if not provider or len(provider) > 128:
-            raise ValueError("provider must be between 1 and 128 characters")
-        if not model or len(model) > 256:
-            raise ValueError("model must be between 1 and 256 characters")
+        provider, model = self._normalize_llm_input(provider, model)
         current = await self._repository.get_llm_configuration(workspace_id)
-        encrypted = current.encrypted_api_key if current else None
-        if api_key is not None:
-            if not api_key.strip():
-                encrypted = None
-            else:
-                if self._fernet is None:
-                    raise RuntimeError("LLM_CONFIG_ENCRYPTION_KEY is required to store an API key")
-                encrypted = self._fernet.encrypt(api_key.strip().encode()).decode()
+        encrypted = self._resolve_encrypted_key(
+            current.encrypted_api_key if current else None, api_key
+        )
         if enabled and not encrypted:
             raise ValueError("an API key is required when LLM enrichment is enabled")
         saved = LlmConfiguration(
-            workspace_id=workspace_id,
-            enabled=enabled,
-            provider=provider,
-            model=model,
-            encrypted_api_key=encrypted,
-            updated_at=datetime.now(UTC),
+            workspace_id, enabled, provider, model, encrypted, datetime.now(UTC)
         )
         await self._repository.save_llm_configuration(saved)
         return await self.get(workspace_id)
+
+    @staticmethod
+    def _normalize_llm_input(provider: str, model: str) -> tuple[str, str]:
+        normalized_provider = provider.strip().lower()
+        normalized_model = model.strip()
+        if not normalized_provider or len(normalized_provider) > 128:
+            raise ValueError("provider must be between 1 and 128 characters")
+        if not normalized_model or len(normalized_model) > 256:
+            raise ValueError("model must be between 1 and 256 characters")
+        return normalized_provider, normalized_model
+
+    def _resolve_encrypted_key(self, current: str | None, api_key: str | None) -> str | None:
+        if api_key is None:
+            return current
+        stripped = api_key.strip()
+        if not stripped:
+            return None
+        if self._fernet is None:
+            raise RuntimeError("LLM_CONFIG_ENCRYPTION_KEY is required to store an API key")
+        return self._fernet.encrypt(stripped.encode()).decode()
 
     async def gateway(self, workspace_id: str) -> LlmGateway | None:
         configuration = await self._repository.get_llm_configuration(workspace_id)

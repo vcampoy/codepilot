@@ -95,24 +95,26 @@ class AnalysisResult:
     @property
     def execution_succeeded(self) -> bool:
         """Whether the deterministic baseline and required language tools ran."""
-        baseline = {
-            outcome.analyzer for outcome in self.analyzer_outcomes if outcome.status == "succeeded"
-        }
-        if (
-            not {"generic.file-metrics", "generic.large-source-file", "generic.long-line"}
-            <= baseline
-        ):
-            return False
-        languages = {outcome.language for outcome in self.analyzer_outcomes if outcome.language}
-        return all(
-            any(
-                outcome.language == language
-                and outcome.status == "succeeded"
-                and not outcome.generic
-                for outcome in self.analyzer_outcomes
-            )
-            for language in languages
+        return _has_required_baseline(self.analyzer_outcomes) and _has_language_analyzers(
+            self.analyzer_outcomes
         )
+
+
+def _has_required_baseline(outcomes: tuple[AnalyzerOutcome, ...]) -> bool:
+    succeeded = {outcome.analyzer for outcome in outcomes if outcome.status == "succeeded"}
+    return {"generic.file-metrics", "generic.large-source-file", "generic.long-line"} <= succeeded
+
+
+def _has_language_analyzers(outcomes: tuple[AnalyzerOutcome, ...]) -> bool:
+    languages = {outcome.language for outcome in outcomes if outcome.language}
+    return all(_language_succeeded(outcomes, language) for language in languages)
+
+
+def _language_succeeded(outcomes: tuple[AnalyzerOutcome, ...], language: str) -> bool:
+    return any(
+        outcome.language == language and outcome.status == "succeeded" and not outcome.generic
+        for outcome in outcomes
+    )
 
 
 @dataclass(frozen=True, slots=True)

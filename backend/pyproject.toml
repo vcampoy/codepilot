@@ -12,6 +12,7 @@ dependencies = [
     "asyncpg>=0.30,<1",
     "celery>=5.5,<6",
     "cryptography>=44,<46",
+    "defusedxml>=0.7,<1",
     "fastapi>=0.115,<1",
     "pydantic>=2.10,<3",
     "pydantic-settings>=2.7,<3",
@@ -29,6 +30,7 @@ dev = [
     "pytest>=8.3,<9",
     "radon>=6,<7",
     "ruff>=0.9,<1",
+    "types-defusedxml>=0.7,<1",
 ]
 llm = [
     "litellm>=1.65,<2",
@@ -66,6 +68,42 @@ select = ["B", "BLE", "E", "F", "I", "SIM", "UP"]
 python_version = "3.13"
 strict = true
 files = ["src", "tests"]
+
+[tool.mutmut]
+source_paths = ["src"]
+only_mutate = [
+    "src/codepilot/analyzers/dependency_graph.py",
+    "src/codepilot/analyzers/git_history.py",
+    "src/codepilot/analyzers/multilanguage_adapters.py",
+    "src/codepilot/analyzers/production.py",
+    "src/codepilot/analyzers/risk_score.py",
+    "src/codepilot/api/v1/analyses.py",
+    "src/codepilot/domain/analysis.py",
+    "src/codepilot/domain/insights.py",
+    "src/codepilot/domain/quality.py",
+    "src/codepilot/llm/gateway.py",
+    "src/codepilot/repositories/analysis.py",
+    "src/codepilot/services/analysis.py",
+    "src/codepilot/services/llm_configuration.py",
+    "src/codepilot/services/repository_ingestion.py",
+    "src/codepilot/services/source_context.py",
+]
+mutate_only_covered_lines = true
+pytest_add_cli_args_test_selection = [
+    "tests/test_analysis_api.py::test_summary_endpoint_exposes_persisted_metrics_after_worker_completion",
+    "tests/test_analysis_insights.py",
+    "tests/test_analysis_orchestration.py",
+    "tests/test_analysis_summary_serialization.py",
+    "tests/test_dependency_graph.py",
+    "tests/test_git_history.py",
+    "tests/test_llm_configuration.py",
+    "tests/test_multilanguage_adapters.py",
+    "tests/test_production_analyzer.py",
+    "tests/test_quality_gate_config.py",
+    "tests/test_repository_ingestion.py",
+    "tests/test_risk_score.py",
+    "tests/test_source_context.py",
+]
 
 [[tool.mypy.overrides]]
 module = ["celery", "celery.*"]
