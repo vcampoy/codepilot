@@ -1,5 +1,6 @@
 ﻿import { useEffect, useMemo, useState } from 'react'
 import type { FormEvent } from 'react'
+import { useId } from 'react'
 import {
   apiDocsUrl,
   createAnalysis,
@@ -29,6 +30,7 @@ import {
 } from './api'
 import { createFindingsMarkdownExport, downloadMarkdownFile } from './findingsExport'
 import { createHotspotsMarkdownExport, MAX_HOTSPOTS_EXPORT } from './hotspotsExport'
+import { TableFilterDialog } from './components/TableFilterDialog'
 import {
   FINDING_COLUMNS,
   FINDING_SEVERITIES,
@@ -71,6 +73,15 @@ const views: { id: View; label: string; icon: string }[] = [
 function viewFromHash(): View {
   const candidate = window.location.hash.replace('#', '') as View
   return views.some((view) => view.id === candidate) ? candidate : 'repositories'
+}
+
+function AppliedFilterTags({ values }: { values: readonly string[] }) {
+  if (values.length === 0) return null
+  return (
+    <ul aria-label="Applied filters" className="applied-filter-tags">
+      {values.map((value) => <li key={value}>{value.charAt(0).toUpperCase() + value.slice(1)}</li>)}
+    </ul>
+  )
 }
 
 function App() {
@@ -336,6 +347,8 @@ function FindingsView({ findings, status, summary, error, repositoryUrl, analysi
   const [sort, setSort] = useState<FindingSort>({ column: 'severity', direction: 'desc' })
   const [visibleColumns, setVisibleColumns] = useState<FindingColumnKey[]>(() => FINDING_COLUMNS.map(({ key }) => key))
   const [filters, setFilters] = useState<FindingFilters>({ severities: [], types: [] })
+  const [draftFilters, setDraftFilters] = useState<FindingFilters>({ severities: [], types: [] })
+  const [filterDialogOpen, setFilterDialogOpen] = useState(false)
   const availableTypes = useMemo(
     () => [...new Set(findings.map((finding) => categoryLabel(finding.category)))].sort((left, right) => left.localeCompare(right)),
     [findings],
@@ -369,7 +382,7 @@ function FindingsView({ findings, status, summary, error, repositoryUrl, analysi
   const orderedFindings = sortFindings(filteredFindings, sort)
   const toggleSort = (column: FindingColumnKey) => setSort((current) => toggleFindingSort(current, column))
   const toggleSeverity = (severity: (typeof FINDING_SEVERITIES)[number]) => {
-    setFilters((current) => ({
+    setDraftFilters((current) => ({
       ...current,
       severities: current.severities.includes(severity)
         ? current.severities.filter((item) => item !== severity)
@@ -377,14 +390,22 @@ function FindingsView({ findings, status, summary, error, repositoryUrl, analysi
     }))
   }
   const toggleType = (type: string) => {
-    setFilters((current) => ({
+    setDraftFilters((current) => ({
       ...current,
       types: current.types.includes(type)
         ? current.types.filter((item) => item !== type)
         : [...current.types, type],
     }))
   }
-  const clearFilters = () => setFilters({ severities: [], types: [] })
+  const openFilterDialog = () => {
+    setDraftFilters({ severities: [...filters.severities], types: [...filters.types] })
+    setFilterDialogOpen(true)
+  }
+  const applyFilters = () => {
+    setFilters({ severities: [...draftFilters.severities], types: [...draftFilters.types] })
+    setFilterDialogOpen(false)
+  }
+  const clearDraftFilters = () => setDraftFilters({ severities: [], types: [] })
   const toggleColumn = (column: FindingColumnKey) => {
     const next = visibleColumns.includes(column) ? visibleColumns.filter((key) => key !== column) : [...visibleColumns, column]
     setVisibleColumns(next)
@@ -404,31 +425,7 @@ function FindingsView({ findings, status, summary, error, repositoryUrl, analysi
         <div className="panel-title">
           <span>Findings ({findings.length})</span>
           <div className="table-actions">
-            <fieldset className="finding-filter-group">
-              <legend>Severity</legend>
-              {FINDING_SEVERITIES.map((severity) => (
-                <label key={severity}>
-                  <input
-                    checked={filters.severities.includes(severity)}
-                    onChange={() => toggleSeverity(severity)}
-                    type="checkbox"
-                  />
-                  {severity.charAt(0).toUpperCase() + severity.slice(1)}
-                </label>
-              ))}
-            </fieldset>
-            <fieldset className="finding-filter-group">
-              <legend>Type</legend>
-              {availableTypes.map((type) => (
-                <label key={type}>
-                  <input checked={filters.types.includes(type)} onChange={() => toggleType(type)} type="checkbox" />
-                  {type}
-                </label>
-              ))}
-            </fieldset>
-            {(filters.severities.length > 0 || filters.types.length > 0) && (
-              <button className="secondary-button" onClick={clearFilters} type="button">Clear filters</button>
-            )}
+            <button className="secondary-button" onClick={openFilterDialog} type="button">Filter</button>
             <details className="column-picker">
               <summary>Columns</summary>
               <fieldset>
@@ -451,6 +448,44 @@ function FindingsView({ findings, status, summary, error, repositoryUrl, analysi
             </button>
           </div>
         </div>
+        <AppliedFilterTags values={[...filters.severities, ...filters.types]} />
+        <TableFilterDialog
+          onApply={applyFilters}
+          onCancel={() => setFilterDialogOpen(false)}
+          open={filterDialogOpen}
+          title="Filter findings"
+        >
+          <fieldset className="filter-dialog-group">
+            <legend>Severity</legend>
+            {FINDING_SEVERITIES.map((severity) => (
+              <label key={severity}>
+                <input
+                  checked={draftFilters.severities.includes(severity)}
+                  onChange={() => toggleSeverity(severity)}
+                  type="checkbox"
+                />
+                {severity.charAt(0).toUpperCase() + severity.slice(1)}
+              </label>
+            ))}
+          </fieldset>
+          <fieldset className="filter-dialog-group">
+            <legend>Type</legend>
+            {availableTypes.map((type) => (
+              <label key={type}>
+                <input checked={draftFilters.types.includes(type)} onChange={() => toggleType(type)} type="checkbox" />
+                {type}
+              </label>
+            ))}
+          </fieldset>
+          <button
+            className="filter-reset-button"
+            disabled={draftFilters.severities.length === 0 && draftFilters.types.length === 0}
+            onClick={clearDraftFilters}
+            type="button"
+          >
+            Clear filters
+          </button>
+        </TableFilterDialog>
         {filteredFindings.length === 0 ? (
           <EmptyState title="No findings match the selected filters." description="Clear one or more filters to show findings again." compact />
         ) : visibleColumns.length === 0 ? (
@@ -532,15 +567,24 @@ function HistoryView({ analysisId, status, projects, projectRuns, onSelectRun }:
 function HotspotsView({ hotspots, status, error, repositoryUrl, analysisId, onSelectPath }: { hotspots: FileInsight[]; status: AnalysisStatus | null; error: string | null; repositoryUrl: string | null; analysisId: string | null; onSelectPath: (path: string) => void }) {
   const [sort, setSort] = useState<HotspotSort>({ column: 'hotspot_score', direction: 'desc' })
   const [filters, setFilters] = useState<HotspotFilters>({ risks: [] })
+  const [draftFilters, setDraftFilters] = useState<HotspotFilters>({ risks: [] })
+  const [filterDialogOpen, setFilterDialogOpen] = useState(false)
   const [exportBusy, setExportBusy] = useState(false)
   const filteredHotspots = useMemo(() => filterHotspots(hotspots, filters), [filters, hotspots])
   const orderedHotspots = useMemo(() => sortHotspots(filteredHotspots, sort), [filteredHotspots, sort])
   const toggleRisk = (risk: (typeof HOTSPOT_RISKS)[number]) => {
-    setFilters((current) => ({
+    setDraftFilters((current) => ({
       risks: current.risks.includes(risk) ? current.risks.filter((item) => item !== risk) : [...current.risks, risk],
     }))
   }
-  const clearFilters = () => setFilters({ risks: [] })
+  const openFilterDialog = () => {
+    setDraftFilters({ risks: [...filters.risks] })
+    setFilterDialogOpen(true)
+  }
+  const applyFilters = () => {
+    setFilters({ risks: [...draftFilters.risks] })
+    setFilterDialogOpen(false)
+  }
   const exportHotspots = async () => {
     if (!repositoryUrl || !analysisId || orderedHotspots.length === 0) return
     setExportBusy(true)
@@ -565,16 +609,179 @@ function HotspotsView({ hotspots, status, error, repositoryUrl, analysisId, onSe
   if (error && hotspots.length === 0) return <EmptyState title="Hotspots unavailable" description={error} />
   if (hotspots.length === 0) return <EmptyState title="No hotspots" description="No file reached the configured hotspot threshold." />
   const sortLabel = HOTSPOT_COLUMNS.find(({ key }) => key === sort.column)?.label ?? sort.column
-  return <section id="hotspots" className="page-grid"><div className="panel table-panel"><div className="panel-title"><span>Hotspots ({filteredHotspots.length === hotspots.length ? hotspots.length : `${filteredHotspots.length} of ${hotspots.length}`})</span><div className="table-actions"><fieldset className="finding-filter-group"><legend>Risk</legend>{HOTSPOT_RISKS.map((risk) => <label key={risk}><input checked={filters.risks.includes(risk)} onChange={() => toggleRisk(risk)} type="checkbox" />{risk.charAt(0).toUpperCase() + risk.slice(1)}</label>)}</fieldset>{filters.risks.length > 0 && <button className="secondary-button" onClick={clearFilters} type="button">Clear filters</button>}<button className="secondary-button" disabled={orderedHotspots.length === 0 || exportBusy} onClick={() => void exportHotspots()} type="button">{exportBusy ? 'Exporting...' : 'Export hotspots (.md)'}</button></div></div>{filteredHotspots.length === 0 ? <EmptyState title="No hotspots match the selected filters." description="Clear the risk filter to show hotspots again." compact /> : <div className="findings-table-wrap"><table className="findings-table"><caption className="sr-only">Hotspots sorted by {sortLabel}</caption><thead><tr>{HOTSPOT_COLUMNS.map(({ key, label }) => <th aria-sort={sort.column === key ? (sort.direction === 'asc' ? 'ascending' : 'descending') : 'none'} key={key} scope="col"><button className="table-sort-button" onClick={() => setSort((current) => toggleHotspotSort(current, key as HotspotColumnKey))} type="button">{label}{sort.column === key && <span aria-hidden="true" className="sort-indicator">{sort.direction === 'asc' ? 'asc' : 'desc'}</span>}</button></th>)}</tr></thead><tbody>{orderedHotspots.map((hotspot) => <tr key={hotspot.path}><td><button className="path-link" onClick={() => onSelectPath(hotspot.path)} type="button"><code>{hotspot.path}</code></button></td><td>{hotspot.hotspot_score.toFixed(2)}</td><td>{hotspot.risk ? `${hotspot.risk.score.toFixed(2)} (${hotspotRisk(hotspot)})` : 'Unavailable'}</td><td>{formatHotspotComponents(hotspot)}</td></tr>)}</tbody></table></div>}</div></section>
+  return (
+    <section id="hotspots" className="page-grid">
+      <div className="panel table-panel">
+        <div className="panel-title">
+          <span>Hotspots ({filteredHotspots.length === hotspots.length ? hotspots.length : `${filteredHotspots.length} of ${hotspots.length}`})</span>
+          <div className="table-actions">
+            <button className="secondary-button" onClick={openFilterDialog} type="button">Filter</button>
+            <button className="secondary-button" disabled={orderedHotspots.length === 0 || exportBusy} onClick={() => void exportHotspots()} type="button">
+              {exportBusy ? 'Exporting...' : 'Export hotspots (.md)'}
+            </button>
+          </div>
+        </div>
+        <AppliedFilterTags values={filters.risks} />
+        <TableFilterDialog
+          onApply={applyFilters}
+          onCancel={() => setFilterDialogOpen(false)}
+          open={filterDialogOpen}
+          title="Filter hotspots"
+        >
+          <fieldset className="filter-dialog-group">
+            <legend>Risk</legend>
+            {HOTSPOT_RISKS.map((risk) => (
+              <label key={risk}>
+                <input checked={draftFilters.risks.includes(risk)} onChange={() => toggleRisk(risk)} type="checkbox" />
+                {risk.charAt(0).toUpperCase() + risk.slice(1)}
+              </label>
+            ))}
+          </fieldset>
+          <button
+            className="filter-reset-button"
+            disabled={draftFilters.risks.length === 0}
+            onClick={() => setDraftFilters({ risks: [] })}
+            type="button"
+          >
+            Clear filters
+          </button>
+        </TableFilterDialog>
+        {filteredHotspots.length === 0 ? (
+          <EmptyState title="No hotspots match the selected filters." description="Clear the risk filter to show hotspots again." compact />
+        ) : (
+          <div className="findings-table-wrap">
+            <table className="findings-table">
+              <caption className="sr-only">Hotspots sorted by {sortLabel}</caption>
+              <thead>
+                <tr>
+                  {HOTSPOT_COLUMNS.map(({ key, label }) => (
+                    <th aria-sort={sort.column === key ? (sort.direction === 'asc' ? 'ascending' : 'descending') : 'none'} key={key} scope="col">
+                      <button className="table-sort-button" onClick={() => setSort((current) => toggleHotspotSort(current, key as HotspotColumnKey))} type="button">
+                        {label}
+                        {sort.column === key && <span aria-hidden="true" className="sort-indicator">{sort.direction === 'asc' ? 'asc' : 'desc'}</span>}
+                      </button>
+                    </th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {orderedHotspots.map((hotspot) => (
+                  <tr key={hotspot.path}>
+                    <td><button className="path-link" onClick={() => onSelectPath(hotspot.path)} type="button"><code>{hotspot.path}</code></button></td>
+                    <td>{hotspot.hotspot_score.toFixed(2)}</td>
+                    <td>{hotspot.risk ? `${hotspot.risk.score.toFixed(2)} (${hotspotRisk(hotspot)})` : 'Unavailable'}</td>
+                    <td>{formatHotspotComponents(hotspot)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </div>
+    </section>
+  )
+}
+
+function findingDisclosureKey(path: string, finding: AnalysisFinding, index: number): string {
+  return `${path}-${finding.analyzer}-${finding.rule_id}-${finding.start_line}-${finding.end_line}-${index}`
+}
+
+function FindingDetailCard({ finding, expanded, onToggle }: { finding: AnalysisFinding; expanded: boolean; onToggle: () => void }) {
+  const sourceId = useId()
+  const summary = (
+    <>
+      <span>
+        <strong>{finding.title || finding.rule_id}</strong><br />
+        {finding.message}<br />
+        <small>
+          Lines {finding.start_line}-{finding.end_line} · {finding.analyzer}
+          {finding.source_context ? ` · ${expanded ? 'Hide code' : 'View code'}` : ''}
+        </small>
+      </span>
+      <span className={`severity-badge severity-${finding.severity}`}>{finding.severity}</span>
+    </>
+  )
+
+  return (
+    <article className="finding-detail">
+      {finding.source_context ? (
+        <button
+          aria-controls={sourceId}
+          aria-expanded={expanded}
+          className="availability-row finding-disclosure"
+          onClick={onToggle}
+          type="button"
+        >
+          {summary}
+        </button>
+      ) : (
+        <div className="availability-row">{summary}</div>
+      )}
+      {expanded && finding.source_context && (
+        <div className="source-context" id={sourceId} aria-label={`Source context for lines ${finding.start_line}-${finding.end_line}`}>
+          {finding.source_context.lines.map((line) => (
+            <div className={`source-line ${line.highlighted || (line.number >= finding.start_line && line.number <= finding.end_line) ? 'source-line-highlight' : ''}`} key={line.number}>
+              <span className="source-line-number">{line.number}</span>
+              <code>{line.text || ' '}</code>
+            </div>
+          ))}
+        </div>
+      )}
+      <div className="finding-meta">
+        <div><strong>Evidence</strong><p>{finding.evidence || 'Evidence unavailable.'}</p></div>
+        <div><strong>Remediation</strong><p>{finding.remediation || 'No remediation was provided by the analyzer.'}</p></div>
+      </div>
+    </article>
+  )
 }
 
 function FileDetailView({ detail, path, files, status, busy, error, catalogError, onSelectPath }: { detail: FileDetail | null; path: string | null; files: FileInsight[]; status: AnalysisStatus | null; busy: boolean; error: string | null; catalogError: string | null; onSelectPath: (path: string) => void }) {
+  const [expandedFindingKey, setExpandedFindingKey] = useState<string | null>(null)
+  useEffect(() => setExpandedFindingKey(null), [path])
   if (status !== 'completed') return <EmptyState title="File detail pending" description="File-level evidence appears after deterministic analysis completes." />
   if (catalogError && files.length === 0 && !path) return <EmptyState title="File catalog unavailable" description={catalogError} />
   if (!path && files.length === 0) return <EmptyState title="No file evidence" description="The completed analysis did not include file-level evidence." />
   if (busy) return <EmptyState title="Loading file detail" description={`Loading evidence for ${path}.`} />
   if (error || !detail) return <EmptyState title="File detail unavailable" description={error || 'No stored evidence exists for this file.'} />
-  return <section className="page-grid"><div className="panel file-picker"><label htmlFor="file-select">File</label><select id="file-select" value={path || ''} onChange={(event) => onSelectPath(event.target.value)}>{files.map((file) => <option key={file.path} value={file.path}>{file.path}</option>)}</select></div><div className="section-heading"><div><p className="kicker">File evidence</p><h2><code>{detail.path}</code></h2></div><span className="status-badge status-completed">completed</span></div><div className="metric-grid"><article className="metric-card"><span>Hotspot score</span><strong>{detail.hotspot_score.toFixed(2)}</strong><small>History and finding evidence</small></article><article className="metric-card"><span>Risk</span><strong>{detail.risk ? detail.risk.score.toFixed(2) : '—'}</strong><small>{detail.risk ? `${detail.risk.category} · v${detail.risk.version}` : 'Unavailable'}</small></article><article className="metric-card"><span>Findings</span><strong>{detail.findings.length}</strong><small>Stored analyzer evidence</small></article></div><div className="panel"><div className="panel-title"><span>Risk components</span><span className="muted">Normalized values</span></div>{Object.entries(detail.risk?.components ?? {}).map(([name, value]) => <div className="availability-row" key={name}><span>{name}</span><strong>{value.toFixed(2)}</strong></div>)}</div><div className="panel"><div className="panel-title"><span>Findings in file</span></div>{detail.findings.length ? detail.findings.map((finding) => <article className="finding-detail" key={`${finding.rule_id}-${finding.start_line}`}><div className="availability-row"><span><strong>{finding.title || finding.rule_id}</strong><br />{finding.message}<br /><small>Lines {finding.start_line}-{finding.end_line} · {finding.analyzer}</small></span><span className={`severity-badge severity-${finding.severity}`}>{finding.severity}</span></div>{finding.source_context && <div className="source-context" aria-label={`Source context for lines ${finding.start_line}-${finding.end_line}`}>{finding.source_context.lines.map((line) => <div className={`source-line ${line.highlighted || (line.number >= finding.start_line && line.number <= finding.end_line) ? 'source-line-highlight' : ''}`} key={line.number}><span className="source-line-number">{line.number}</span><code>{line.text || ' '}</code></div>)}</div>}<div className="finding-meta"><div><strong>Evidence</strong><p>{finding.evidence || 'Evidence unavailable.'}</p></div><div><strong>Remediation</strong><p>{finding.remediation || 'No remediation was provided by the analyzer.'}</p></div></div></article>) : <EmptyState title="No findings" description="No finding is attached to this file." compact />}</div></section>
+  return (
+    <section className="page-grid">
+      <div className="panel file-picker">
+        <label htmlFor="file-select">File</label>
+        <select id="file-select" value={path || ''} onChange={(event) => onSelectPath(event.target.value)}>
+          {files.map((file) => <option key={file.path} value={file.path}>{file.path}</option>)}
+        </select>
+      </div>
+      <div className="section-heading">
+        <div><p className="kicker">File evidence</p><h2><code>{detail.path}</code></h2></div>
+        <span className="status-badge status-completed">completed</span>
+      </div>
+      <div className="metric-grid">
+        <article className="metric-card"><span>Hotspot score</span><strong>{detail.hotspot_score.toFixed(2)}</strong><small>History and finding evidence</small></article>
+        <article className="metric-card"><span>Risk</span><strong>{detail.risk ? detail.risk.score.toFixed(2) : '—'}</strong><small>{detail.risk ? `${detail.risk.category} · v${detail.risk.version}` : 'Unavailable'}</small></article>
+        <article className="metric-card"><span>Findings</span><strong>{detail.findings.length}</strong><small>Stored analyzer evidence</small></article>
+      </div>
+      <div className="panel">
+        <div className="panel-title"><span>Risk components</span><span className="muted">Normalized values</span></div>
+        {Object.entries(detail.risk?.components ?? {}).map(([name, value]) => <div className="availability-row" key={name}><span>{name}</span><strong>{value.toFixed(2)}</strong></div>)}
+      </div>
+      <div className="panel">
+        <div className="panel-title"><span>Findings in file</span></div>
+        {detail.findings.length
+          ? detail.findings.map((finding, index) => {
+            const findingKey = findingDisclosureKey(detail.path, finding, index)
+            return (
+              <FindingDetailCard
+                expanded={expandedFindingKey === findingKey}
+                finding={finding}
+                key={findingKey}
+                onToggle={() => setExpandedFindingKey((current) => current === findingKey ? null : findingKey)}
+              />
+            )
+          })
+          : <EmptyState title="No findings" description="No finding is attached to this file." compact />}
+      </div>
+    </section>
+  )
 }
 
 function QualityGateView({ summary, projectId, onNavigate }: { summary: AnalysisSummaryResponse['summary']; projectId: string | null; onNavigate: (view: View) => void }) {

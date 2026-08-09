@@ -1,4 +1,4 @@
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 type Deferred<T> = {
@@ -101,6 +101,54 @@ const insight = {
   metrics: { finding_severity: 1 },
 } as const
 
+const alternateInsight = { ...insight, path: 'src/other.py' } as const
+
+const filterFindings = [
+  finding,
+  { ...finding, rule_id: 'PY002', severity: 'critical', message: 'Critical security issue.', category: 'security' },
+  { ...finding, rule_id: 'PY003', severity: 'info', message: 'Informational quality issue.', category: 'quality' },
+] as const
+
+const contextualFinding = {
+  ...finding,
+  start_line: 3,
+  end_line: 3,
+  evidence: 'Unsafe call',
+  remediation: 'Use a safe parser.',
+  source_context: {
+    start_line: 1,
+    end_line: 5,
+    lines: [
+      { number: 1, text: 'one' },
+      { number: 2, text: 'two' },
+      { number: 3, text: 'eval(x)', highlighted: true },
+      { number: 4, text: 'four' },
+      { number: 5, text: 'five' },
+    ],
+  },
+} as const
+
+const contextualFindings = [contextualFinding] as const
+
+const secondContextualFinding = {
+  ...contextualFinding,
+  rule_id: 'PY002',
+  message: 'Another unsafe pattern.',
+  start_line: 8,
+  end_line: 8,
+  source_context: {
+    start_line: 7,
+    end_line: 9,
+    lines: [
+      { number: 7, text: 'before()' },
+      { number: 8, text: 'danger()', highlighted: true },
+      { number: 9, text: 'after()' },
+    ],
+  },
+} as const
+
+const multipleContextualFindings = [contextualFinding, secondContextualFinding] as const
+
 function configureCompletedRun() {
   fixtures.createAnalysis.mockResolvedValue({ analysis_id: 'analysis-1', status: 'queued' })
   fixtures.getAnalysisStatus.mockResolvedValue(completedStatus)
@@ -119,13 +167,8 @@ afterEach(() => cleanup())
 
 describe('completed analysis result loading', () => {
   it('filters findings by severity and type', async () => {
-    const findings = [
-      finding,
-      { ...finding, rule_id: 'PY002', severity: 'critical', message: 'Critical security issue.', category: 'security' },
-      { ...finding, rule_id: 'PY003', severity: 'info', message: 'Informational quality issue.', category: 'quality' },
-    ] as const
     configureCompletedRun()
-    fixtures.getAnalysisFindings.mockResolvedValue(findings)
+    fixtures.getAnalysisFindings.mockResolvedValue(filterFindings)
     fixtures.getAnalysisHotspots.mockResolvedValue([insight])
     fixtures.getAnalysisFiles.mockResolvedValue({ items: [insight], total: 1, limit: 100, offset: 0 })
 
@@ -136,18 +179,46 @@ describe('completed analysis result loading', () => {
     fireEvent.click(await screen.findByRole('button', { name: 'Findings' }))
     await waitFor(() => expect(screen.getByText('Findings (3)')).toBeInTheDocument())
 
-    fireEvent.click(screen.getByRole('checkbox', { name: 'Critical' }))
+    expect(screen.queryByRole('checkbox', { name: 'Critical' })).not.toBeInTheDocument()
+    const filterButton = screen.getByRole('button', { name: 'Filter' })
+    filterButton.focus()
+    fireEvent.click(filterButton)
+    const firstDialog = screen.getByRole('dialog', { name: 'Filter findings' })
+    fireEvent.click(within(firstDialog).getByRole('checkbox', { name: 'Critical' }))
+    expect(screen.getByText('Avoid this pattern.')).toBeInTheDocument()
+    fireEvent.keyDown(firstDialog, { key: 'Escape' })
+    expect(screen.queryByRole('dialog', { name: 'Filter findings' })).not.toBeInTheDocument()
+    expect(filterButton).toHaveFocus()
+    expect(screen.queryByLabelText('Applied filters')).not.toBeInTheDocument()
+
+    fireEvent.click(filterButton)
+    const cancelledDialog = screen.getByRole('dialog', { name: 'Filter findings' })
+    fireEvent.click(within(cancelledDialog).getByRole('checkbox', { name: 'Critical' }))
+    fireEvent.click(within(cancelledDialog).getByRole('button', { name: 'Cancel' }))
+    expect(screen.getByText('Avoid this pattern.')).toBeInTheDocument()
+    expect(screen.queryByLabelText('Applied filters')).not.toBeInTheDocument()
+
+    fireEvent.click(filterButton)
+    const dialog = screen.getByRole('dialog', { name: 'Filter findings' })
+    fireEvent.click(within(dialog).getByRole('checkbox', { name: 'Critical' }))
+    fireEvent.click(within(dialog).getByRole('checkbox', { name: 'Security' }))
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Apply' }))
+    expect(filterButton).toHaveFocus()
+
+    const appliedFilters = screen.getByLabelText('Applied filters')
+    expect(within(appliedFilters).getByText('Critical')).toBeInTheDocument()
+    expect(within(appliedFilters).getByText('Security')).toBeInTheDocument()
     expect(screen.getByText('Critical security issue.')).toBeInTheDocument()
     expect(screen.queryByText('Avoid this pattern.')).not.toBeInTheDocument()
-
-    fireEvent.click(screen.getByRole('checkbox', { name: 'Security' }))
-    expect(screen.getByText('Critical security issue.')).toBeInTheDocument()
     expect(screen.queryByText('Informational quality issue.')).not.toBeInTheDocument()
 
-    fireEvent.click(screen.getByRole('checkbox', { name: 'Security' }))
-    fireEvent.click(screen.getByRole('checkbox', { name: 'Quality' }))
-    expect(screen.queryByText('Critical security issue.')).not.toBeInTheDocument()
-    expect(screen.getByText('No findings match the selected filters.')).toBeInTheDocument()
+    fireEvent.click(filterButton)
+    const clearDialog = screen.getByRole('dialog', { name: 'Filter findings' })
+    fireEvent.click(within(clearDialog).getByRole('button', { name: 'Clear filters' }))
+    fireEvent.click(within(clearDialog).getByRole('button', { name: 'Apply' }))
+    expect(screen.queryByLabelText('Applied filters')).not.toBeInTheDocument()
+    expect(screen.getByText('Avoid this pattern.')).toBeInTheDocument()
+    expect(screen.getByText('Informational quality issue.')).toBeInTheDocument()
   })
 
   it('disables findings export when filters hide every finding', async () => {
@@ -165,7 +236,11 @@ describe('completed analysis result loading', () => {
 
     const exportButton = screen.getByRole('button', { name: 'Export findings (.md)' })
     expect(exportButton).toBeEnabled()
-    fireEvent.click(screen.getByRole('checkbox', { name: 'Critical' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Filter' }))
+    const dialog = screen.getByRole('dialog', { name: 'Filter findings' })
+    fireEvent.click(within(dialog).getByRole('checkbox', { name: 'Critical' }))
+    expect(exportButton).toBeEnabled()
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Apply' }))
     expect(screen.getByText('No findings match the selected filters.')).toBeInTheDocument()
     expect(exportButton).toBeDisabled()
   })
@@ -220,8 +295,13 @@ describe('completed analysis result loading', () => {
     await waitFor(() => expect(screen.getByText('Hotspots (2)')).toBeInTheDocument())
 
     expect(screen.getByRole('button', { name: 'Export hotspots (.md)' })).toBeEnabled()
-    fireEvent.click(screen.getByRole('checkbox', { name: 'High' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Filter' }))
+    const dialog = screen.getByRole('dialog', { name: 'Filter hotspots' })
+    fireEvent.click(within(dialog).getByRole('checkbox', { name: 'High' }))
+    expect(screen.getByText('Hotspots (2)')).toBeInTheDocument()
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Apply' }))
     expect(screen.getByText('Hotspots (1 of 2)')).toBeInTheDocument()
+    expect(within(screen.getByLabelText('Applied filters')).getByText('High')).toBeInTheDocument()
     expect(screen.queryByText('src/other.py')).not.toBeInTheDocument()
     fireEvent.click(screen.getByRole('button', { name: /Risk/ }))
     expect(screen.getByRole('columnheader', { name: /Risk/ })).toHaveAttribute('aria-sort', 'ascending')
@@ -272,36 +352,65 @@ describe('completed analysis result loading', () => {
 
   it('renders bounded source context, highlighted range, evidence, and remediation', async () => {
     configureCompletedRun()
-    const contextualFinding = {
-      ...finding,
-      start_line: 3,
-      end_line: 3,
-      evidence: 'Unsafe call',
-      remediation: 'Use a safe parser.',
-      source_context: {
-        start_line: 1,
-        end_line: 5,
-        lines: [
-          { number: 1, text: 'one' },
-          { number: 2, text: 'two' },
-          { number: 3, text: 'eval(x)', highlighted: true },
-          { number: 4, text: 'four' },
-          { number: 5, text: 'five' },
-        ],
-      },
-    }
-    fixtures.getAnalysisFindings.mockResolvedValue([contextualFinding])
+    fixtures.getAnalysisFindings.mockResolvedValue(contextualFindings)
     fixtures.getAnalysisHotspots.mockResolvedValue([insight])
     fixtures.getAnalysisFiles.mockResolvedValue({ items: [insight], total: 1, limit: 100, offset: 0 })
-    fixtures.getAnalysisFileDetail.mockResolvedValue({ ...insight, findings: [contextualFinding] })
+    fixtures.getAnalysisFileDetail.mockResolvedValue({ ...insight, findings: contextualFindings })
 
     render(<App />)
     fireEvent.submit(screen.getByRole('button', { name: 'Analyze repository' }).closest('form')!, { preventDefault: () => undefined })
     fireEvent.click(await screen.findByRole('button', { name: 'File detail' }))
-    await waitFor(() => expect(screen.getByText('eval(x)')).toBeInTheDocument())
+    await waitFor(() => expect(screen.getByRole('button', { name: /PY001/ })).toBeInTheDocument())
+    expect(screen.queryByText('eval(x)')).not.toBeInTheDocument()
     expect(screen.getByText('Unsafe call')).toBeInTheDocument()
     expect(screen.getByText('Use a safe parser.')).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: /PY001/ }))
+    expect(screen.getByText('eval(x)')).toBeInTheDocument()
     expect(screen.getByText('eval(x)').closest('.source-line')).toHaveClass('source-line-highlight')
+  })
+
+  it('hides source context again after selecting another file', async () => {
+    configureCompletedRun()
+    fixtures.getAnalysisFindings.mockResolvedValue(contextualFindings)
+    fixtures.getAnalysisHotspots.mockResolvedValue([insight, alternateInsight])
+    fixtures.getAnalysisFiles.mockResolvedValue({ items: [insight, alternateInsight], total: 2, limit: 100, offset: 0 })
+    fixtures.getAnalysisFileDetail.mockImplementation(async (_id: string, path: string) => ({
+      ...(path === insight.path ? insight : alternateInsight),
+      findings: contextualFindings,
+    }))
+
+    render(<App />)
+    fireEvent.submit(screen.getByRole('button', { name: 'Analyze repository' }).closest('form')!, { preventDefault: () => undefined })
+    fireEvent.click(await screen.findByRole('button', { name: 'File detail' }))
+    const findingButton = await screen.findByRole('button', { name: /PY001/ })
+    fireEvent.click(findingButton)
+    expect(screen.getByText('eval(x)')).toBeInTheDocument()
+
+    fireEvent.change(screen.getByLabelText('File'), { target: { value: alternateInsight.path } })
+    await waitFor(() => expect(screen.getByRole('heading', { name: alternateInsight.path })).toBeInTheDocument())
+    expect(screen.queryByText('eval(x)')).not.toBeInTheDocument()
+  })
+
+  it('shows source context for only one finding at a time', async () => {
+    configureCompletedRun()
+    fixtures.getAnalysisFindings.mockResolvedValue(multipleContextualFindings)
+    fixtures.getAnalysisHotspots.mockResolvedValue([insight])
+    fixtures.getAnalysisFiles.mockResolvedValue({ items: [insight], total: 1, limit: 100, offset: 0 })
+    fixtures.getAnalysisFileDetail.mockResolvedValue({ ...insight, findings: multipleContextualFindings })
+
+    render(<App />)
+    fireEvent.submit(screen.getByRole('button', { name: 'Analyze repository' }).closest('form')!, { preventDefault: () => undefined })
+    fireEvent.click(await screen.findByRole('button', { name: 'File detail' }))
+    const firstFinding = await screen.findByRole('button', { name: /PY001/ })
+    const secondFinding = screen.getByRole('button', { name: /PY002/ })
+
+    fireEvent.click(firstFinding)
+    expect(screen.getByText('eval(x)')).toBeInTheDocument()
+    expect(screen.queryByText('danger()')).not.toBeInTheDocument()
+
+    fireEvent.click(secondFinding)
+    expect(screen.queryByText('eval(x)')).not.toBeInTheDocument()
+    expect(screen.getByText('danger()')).toBeInTheDocument()
   })
 
   it('renders configured quality-gate pass and failure states', async () => {
