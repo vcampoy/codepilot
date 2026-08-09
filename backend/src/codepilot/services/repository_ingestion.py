@@ -312,6 +312,53 @@ def _is_unsafe_address(address: str) -> bool:
     )
 
 
+def _parse_public_repository_hostname(url: str) -> str:
+    try:
+        parsed = urlsplit(url)
+        hostname = parsed.hostname
+        port = parsed.port
+    except ValueError as error:
+        raise UnsupportedRepositoryUrlError() from error
+    if (
+        parsed.scheme.casefold() != "https"
+        or not hostname
+        or parsed.username is not None
+        or parsed.password is not None
+        or parsed.query
+        or parsed.fragment
+        or parsed.path in {"", "/"}
+        or port not in {None, 443}
+    ):
+        raise UnsupportedRepositoryUrlError()
+    return hostname.rstrip(".").casefold()
+
+
+def _validate_public_repository_hostname(hostname: str) -> None:
+    try:
+        ipaddress.ip_address(hostname)
+    except ValueError:
+        pass
+    else:
+        if _is_unsafe_address(hostname):
+            raise PrivateRepositoryTargetError()
+    if hostname == "localhost" or hostname.endswith(_UNSAFE_HOSTNAME_SUFFIXES):
+        raise PrivateRepositoryTargetError()
+
+
+async def _resolve_public_repository_addresses(
+    hostname: str, resolve_addresses: Callable[[str], Sequence[str]]
+) -> tuple[str, ...]:
+    try:
+        addresses = tuple(await asyncio.to_thread(resolve_addresses, hostname))
+    except RepositoryIngestionError:
+        raise
+    except OSError as error:
+        raise RepositoryTargetResolutionError() from error
+    if not addresses or any(_is_unsafe_address(address) for address in addresses):
+        raise PrivateRepositoryTargetError()
+    return addresses
+
+
 class PublicHttpsRepositoryUrlValidator:
     """Validate URLs and pin their public DNS destinations for Git."""
 
@@ -319,47 +366,10 @@ class PublicHttpsRepositoryUrlValidator:
         self._resolve_addresses = resolve_addresses or _resolve_public_addresses
 
     async def validate(self, url: str) -> ValidatedRepositoryTarget:
-        try:
-            parsed = urlsplit(url)
-            hostname = parsed.hostname
-            port = parsed.port
-        except ValueError as error:
-            raise UnsupportedRepositoryUrlError() from error
-
-        if (
-            parsed.scheme.casefold() != "https"
-            or not hostname
-            or parsed.username is not None
-            or parsed.password is not None
-            or parsed.query
-            or parsed.fragment
-            or parsed.path in {"", "/"}
-            or port not in {None, 443}
-        ):
-            raise UnsupportedRepositoryUrlError()
-
-        normalized_hostname = hostname.rstrip(".").casefold()
-        try:
-            ipaddress.ip_address(normalized_hostname)
-        except ValueError:
-            pass
-        else:
-            if _is_unsafe_address(normalized_hostname):
-                raise PrivateRepositoryTargetError()
-        if normalized_hostname == "localhost" or normalized_hostname.endswith(
-            _UNSAFE_HOSTNAME_SUFFIXES
-        ):
-            raise PrivateRepositoryTargetError()
-
-        try:
-            addresses = tuple(await asyncio.to_thread(self._resolve_addresses, normalized_hostname))
-        except RepositoryIngestionError:
-            raise
-        except OSError as error:
-            raise RepositoryTargetResolutionError() from error
-        if not addresses or any(_is_unsafe_address(address) for address in addresses):
-            raise PrivateRepositoryTargetError()
-        return ValidatedRepositoryTarget(url, normalized_hostname, addresses)
+        hostname = _parse_public_repository_hostname(url)
+        _validate_public_repository_hostname(hostname)
+        addresses = await _resolve_public_repository_addresses(hostname, self._resolve_addresses)
+        return ValidatedRepositoryTarget(url, hostname, addresses)
 
 
 def _is_generated_file(path: Path) -> bool:
@@ -569,6 +579,65 @@ class SubprocessGitClient:
         )
         return current_branch.strip() or None
 
+    async def _wait_for_metadata_output(
+        self,
+        process: asyncio.subprocess.Process,
+        communicate_task: asyncio.Task[bytes],
+        cancellation_event: asyncio.Event | None,
+    ) -> bytes:
+        if cancellation_event is None:
+            return await asyncio.wait_for(
+                asyncio.shield(communicate_task), timeout=self._metadata_timeout_seconds
+            )
+
+        cancellation_task = asyncio.create_task(cancellation_event.wait())
+        try:
+            done, _pending = await asyncio.wait(
+                (communicate_task, cancellation_task),
+                timeout=self._metadata_timeout_seconds,
+            )
+            if cancellation_task in done and cancellation_event.is_set():
+                raise RepositoryCancelledError()
+            if communicate_task not in done:
+                raise RepositoryTimeoutError()
+            return communicate_task.result()
+        finally:
+            cancellation_task.cancel()
+            await asyncio.gather(cancellation_task, return_exceptions=True)
+
+    async def _collect_metadata_output(
+        self,
+        process: asyncio.subprocess.Process,
+        communicate_task: asyncio.Task[bytes],
+        cancellation_event: asyncio.Event | None,
+    ) -> bytes:
+        try:
+            return await self._wait_for_metadata_output(
+                process, communicate_task, cancellation_event
+            )
+        except TimeoutError as error:
+            raise RepositoryTimeoutError() from error
+        except RepositoryOutputLimitError:
+            raise
+        except asyncio.CancelledError:
+            raise
+        finally:
+            if not communicate_task.done():
+                await self._stop_process_tree(process, communicate_task)
+
+    async def _ensure_metadata_process_exit(
+        self,
+        process: asyncio.subprocess.Process,
+        communicate_task: asyncio.Task[bytes],
+    ) -> None:
+        if process.returncode is None:
+            try:
+                await asyncio.wait_for(process.wait(), timeout=0.5)
+            except TimeoutError as error:
+                await self._stop_process_tree(process, communicate_task)
+                raise RepositoryTimeoutError() from error
+        _close_process_transport(process)
+
     async def _run_metadata_command(
         self,
         arguments: list[str],
@@ -583,47 +652,8 @@ class SubprocessGitClient:
         communicate_task = asyncio.create_task(
             _read_bounded_stdout(process, _MAX_METADATA_OUTPUT_BYTES)
         )
-        cancellation_task: asyncio.Task[bool] | None = None
-        try:
-            if cancellation_event is None:
-                stdout = await asyncio.wait_for(
-                    asyncio.shield(communicate_task), timeout=self._metadata_timeout_seconds
-                )
-            else:
-                cancellation_task = asyncio.create_task(cancellation_event.wait())
-                done, _pending = await asyncio.wait(
-                    (communicate_task, cancellation_task),
-                    timeout=self._metadata_timeout_seconds,
-                )
-                if cancellation_task in done and cancellation_event.is_set():
-                    await self._stop_process_tree(process, communicate_task)
-                    raise RepositoryCancelledError()
-                if communicate_task not in done:
-                    await self._stop_process_tree(process, communicate_task)
-                    raise RepositoryTimeoutError()
-                stdout = communicate_task.result()
-        except TimeoutError as error:
-            await self._stop_process_tree(process, communicate_task)
-            raise RepositoryTimeoutError() from error
-        except RepositoryOutputLimitError:
-            await self._stop_process_tree(process, communicate_task)
-            raise
-        except asyncio.CancelledError:
-            await self._stop_process_tree(process, communicate_task)
-            raise
-        finally:
-            if cancellation_task is not None:
-                cancellation_task.cancel()
-                await asyncio.gather(cancellation_task, return_exceptions=True)
-            if not communicate_task.done():
-                await self._stop_process_tree(process, communicate_task)
-        if process.returncode is None:
-            try:
-                await asyncio.wait_for(process.wait(), timeout=0.5)
-            except TimeoutError as error:
-                await self._stop_process_tree(process, communicate_task)
-                raise RepositoryTimeoutError() from error
-        _close_process_transport(process)
+        stdout = await self._collect_metadata_output(process, communicate_task, cancellation_event)
+        await self._ensure_metadata_process_exit(process, communicate_task)
         if process.returncode != 0:
             if allow_failure:
                 return ""

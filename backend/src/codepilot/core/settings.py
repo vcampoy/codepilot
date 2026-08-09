@@ -102,55 +102,81 @@ class Settings(BaseSettings):
             return self
 
         errors: list[str] = []
+        errors.extend(self._production_authentication_errors())
+        errors.extend(self._production_url_errors())
+        errors.extend(self._production_database_errors())
+        errors.extend(self._production_cors_errors())
+        errors.extend(self._production_llm_errors())
+        errors.extend(self._production_github_errors())
+        if errors:
+            raise ValueError("; ".join(errors))
+        return self
+
+    def _production_authentication_errors(self) -> tuple[str, ...]:
+        errors: list[str] = []
         if not self.auth_required or not self.auth_api_key_value():
             errors.append("auth_required and auth_api_key are required in production")
         if self.log_format != "json":
             errors.append("log_format must be 'json' in production")
-        urls = {
+        return tuple(errors)
+
+    def _production_urls(self) -> dict[str, str]:
+        return {
             "database_url": self.database_url.get_secret_value(),
             "redis_url": self.redis_url.get_secret_value(),
             "celery_broker_url": self.celery_broker_url.get_secret_value(),
             "celery_result_backend": self.celery_result_backend.get_secret_value(),
         }
+
+    def _production_url_errors(self) -> tuple[str, ...]:
+        urls = self._production_urls()
+        errors: list[str] = []
         for name, value in urls.items():
-            host = urlsplit(value).hostname
-            if host in {"localhost", "127.0.0.1", "::1"}:
+            if urlsplit(value).hostname in {"localhost", "127.0.0.1", "::1"}:
                 errors.append(f"{name} must not use localhost in production")
         for name in ("redis_url", "celery_broker_url", "celery_result_backend"):
             if urlsplit(urls[name]).scheme != "rediss":
                 errors.append(f"{name} must use rediss:// in production")
+        return tuple(errors)
+
+    def _production_database_errors(self) -> tuple[str, ...]:
         database = urlsplit(self.database_url.get_secret_value())
         if database.username == "codepilot" and database.password == "codepilot":
-            errors.append(
-                "database_url must not use the default database credentials in production"
-            )
+            return ("database_url must not use the default database credentials in production",)
+        return ()
+
+    def _production_cors_errors(self) -> tuple[str, ...]:
         if (
             not self.cors_origins
             or "*" in self.cors_origins
             or any(not origin.startswith("https://") for origin in self.cors_origins)
         ):
-            errors.append(
+            return (
                 "cors_origins must contain only HTTPS origins and must not be "
-                "wildcard in production"
+                "wildcard in production",
             )
+        return ()
+
+    def _production_llm_errors(self) -> tuple[str, ...]:
         llm_values = (self.llm_provider, self.llm_model, self.llm_api_key_value())
         if (self.llm_enabled or any(llm_values)) and not all(llm_values):
-            errors.append(
-                "llm_provider, llm_model, and llm_api_key must be complete and enabled together"
+            return (
+                "llm_provider, llm_model, and llm_api_key must be complete and enabled together",
             )
+        return ()
+
+    def _production_github_errors(self) -> tuple[str, ...]:
         github_values = (
             self.github_app_id,
             self.github_private_key_value(),
             self.github_webhook_secret_value(),
         )
         if self.github_enabled and not all(github_values):
-            errors.append(
+            return (
                 "github_app_id, github_private_key, and github_webhook_secret "
-                "are required when GitHub is enabled"
+                "are required when GitHub is enabled",
             )
-        if errors:
-            raise ValueError("; ".join(errors))
-        return self
+        return ()
 
     def database_url_value(self) -> str:
         return self.database_url.get_secret_value()

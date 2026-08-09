@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import time
 from pathlib import Path
+from typing import Any
 
 from codepilot.analyzers.framework import (
     AnalyzerContext,
@@ -111,13 +112,7 @@ def _check_depth(value: object, depth: int, maximum: int) -> None:
             _check_depth(child, depth + 1, maximum)
 
 
-def parse_sarif_json(
-    payload: str | bytes,
-    *,
-    max_bytes: int = 5_000_000,
-    max_depth: int = 50,
-) -> tuple[NormalizedFinding, ...]:
-    """Parse SARIF 2.1 results with bounded size and nesting."""
+def _load_sarif_document(payload: str | bytes, max_bytes: int, max_depth: int) -> dict[str, Any]:
     raw = payload.encode("utf-8") if isinstance(payload, str) else payload
     if len(raw) > max_bytes:
         raise SarifTooLargeError("SARIF document exceeds the configured size limit.")
@@ -127,35 +122,45 @@ def parse_sarif_json(
         raise ValueError("SARIF document must be a JSON object.")
     if document.get("version") != "2.1.0" or not isinstance(document.get("runs"), list):
         raise ValueError("SARIF document must use version 2.1.0 and contain runs.")
-    findings: list[NormalizedFinding] = []
-    for run in document["runs"]:
-        driver = run.get("tool", {}).get("driver", {})
-        analyzer = str(driver.get("name") or "SARIF")
-        for result in run.get("results", []):
-            location = (result.get("locations") or [{}])[0].get("physicalLocation", {})
-            artifact = location.get("artifactLocation", {})
-            region = location.get("region", {})
-            start_line = int(region.get("startLine") or 1)
-            findings.append(
-                NormalizedFinding(
-                    analyzer=analyzer,
-                    rule_id=str(result.get("ruleId") or "SARIF"),
-                    severity={"error": "error", "warning": "warning", "note": "info"}.get(
-                        str(result.get("level", "warning")), "info"
-                    ),
-                    category="security" if analyzer.lower() == "roslyn" else "quality",
-                    title=str(result.get("ruleId") or "SARIF finding"),
-                    description=str(result.get("message", {}).get("text", "SARIF finding")),
-                    path=Path(str(artifact.get("uri") or "<unknown>")).as_posix(),
-                    start_line=start_line,
-                    end_line=int(region.get("endLine") or start_line),
-                    evidence=str(
-                        (result.get("fingerprints") or {}).get("primaryLocationLineHash", "")
-                    )
-                    or None,
-                )
-            )
-    return tuple(findings)
+    return document
+
+
+def _parse_sarif_result(result: dict[str, Any], analyzer: str) -> NormalizedFinding:
+    location = (result.get("locations") or [{}])[0].get("physicalLocation", {})
+    artifact = location.get("artifactLocation", {})
+    region = location.get("region", {})
+    start_line = int(region.get("startLine") or 1)
+    return NormalizedFinding(
+        analyzer=analyzer,
+        rule_id=str(result.get("ruleId") or "SARIF"),
+        severity={"error": "error", "warning": "warning", "note": "info"}.get(
+            str(result.get("level", "warning")), "info"
+        ),
+        category="security" if analyzer.lower() == "roslyn" else "quality",
+        title=str(result.get("ruleId") or "SARIF finding"),
+        description=str(result.get("message", {}).get("text", "SARIF finding")),
+        path=Path(str(artifact.get("uri") or "<unknown>")).as_posix(),
+        start_line=start_line,
+        end_line=int(region.get("endLine") or start_line),
+        evidence=str((result.get("fingerprints") or {}).get("primaryLocationLineHash", "")) or None,
+    )
+
+
+def _parse_sarif_run(run: dict[str, Any]) -> tuple[NormalizedFinding, ...]:
+    driver = run.get("tool", {}).get("driver", {})
+    analyzer = str(driver.get("name") or "SARIF")
+    return tuple(_parse_sarif_result(result, analyzer) for result in run.get("results", []))
+
+
+def parse_sarif_json(
+    payload: str | bytes,
+    *,
+    max_bytes: int = 5_000_000,
+    max_depth: int = 50,
+) -> tuple[NormalizedFinding, ...]:
+    """Parse SARIF 2.1 results with bounded size and nesting."""
+    document = _load_sarif_document(payload, max_bytes, max_depth)
+    return tuple(finding for run in document["runs"] for finding in _parse_sarif_run(run))
 
 
 class SarifFileAnalyzer:

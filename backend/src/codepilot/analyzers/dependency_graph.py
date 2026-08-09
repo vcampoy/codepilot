@@ -127,6 +127,59 @@ class CSharpReferenceExtractor:
         return tuple(sorted(self._namespace.findall(text)))
 
 
+def _discover_graph_paths(root: Path, limits: GraphLimits) -> tuple[Path, ...]:
+    return tuple(
+        sorted(
+            path
+            for path in root.rglob("*")
+            if path.is_file() and path.stat().st_size <= limits.max_file_bytes
+        )[: limits.max_nodes]
+    )
+
+
+def _extractor_for(
+    path: Path,
+    python: PythonImportExtractor,
+    typescript: TypeScriptImportExtractor,
+    csharp: CSharpReferenceExtractor,
+) -> PythonImportExtractor | TypeScriptImportExtractor | CSharpReferenceExtractor:
+    if path.suffix == ".py":
+        return python
+    if path.suffix.lower() in {".js", ".jsx", ".ts", ".tsx"}:
+        return typescript
+    return csharp
+
+
+def _collect_graph_edges(
+    paths: tuple[Path, ...],
+    root: Path,
+    identifiers: set[str],
+    limits: GraphLimits,
+    python: PythonImportExtractor,
+    typescript: TypeScriptImportExtractor,
+    csharp: CSharpReferenceExtractor,
+) -> tuple[GraphEdge, ...]:
+    edges: set[GraphEdge] = set()
+    for path in paths:
+        source = path.relative_to(root).as_posix()
+        extractor = _extractor_for(path, python, typescript, csharp)
+        for target in extractor.extract(path, root):
+            if target in identifiers and len(edges) < limits.max_edges:
+                edges.add(GraphEdge(source, target, "imports", type(extractor).__name__))
+    return tuple(sorted(edges, key=lambda edge: (edge.source, edge.target, edge.analyzer)))
+
+
+def _calculate_degrees(
+    edges: tuple[GraphEdge, ...],
+) -> tuple[dict[str, int], dict[str, int]]:
+    out_degree: defaultdict[str, int] = defaultdict(int)
+    in_degree: defaultdict[str, int] = defaultdict(int)
+    for edge in edges:
+        out_degree[edge.source] += 1
+        in_degree[edge.target] += 1
+    return dict(in_degree), dict(out_degree)
+
+
 class DependencyGraphBuilder:
     def __init__(self, limits: GraphLimits | None = None) -> None:
         self._limits = limits or GraphLimits()
@@ -135,48 +188,34 @@ class DependencyGraphBuilder:
         self._csharp = CSharpReferenceExtractor()
 
     def build(self, root: Path) -> DependencyGraph:
-        paths = sorted(
-            path
-            for path in root.rglob("*")
-            if path.is_file() and path.stat().st_size <= self._limits.max_file_bytes
-        )[: self._limits.max_nodes]
+        paths = _discover_graph_paths(root, self._limits)
         identifiers = {path.relative_to(root).as_posix() for path in paths}
         nodes = tuple(GraphNode(identifier) for identifier in sorted(identifiers))
-        edges: set[GraphEdge] = set()
-        for path in paths:
-            source = path.relative_to(root).as_posix()
-            extractor = (
-                self._python
-                if path.suffix == ".py"
-                else self._typescript
-                if path.suffix.lower() in {".js", ".jsx", ".ts", ".tsx"}
-                else self._csharp
-            )
-            for target in extractor.extract(path, root):
-                if target in identifiers and len(edges) < self._limits.max_edges:
-                    analyzer = type(extractor).__name__
-                    edges.add(GraphEdge(source, target, "imports", analyzer))
-        ordered_edges = tuple(
-            sorted(edges, key=lambda edge: (edge.source, edge.target, edge.analyzer))
+        ordered_edges = _collect_graph_edges(
+            paths,
+            root,
+            identifiers,
+            self._limits,
+            self._python,
+            self._typescript,
+            self._csharp,
         )
-        out_degree: defaultdict[str, int] = defaultdict(int)
-        in_degree: defaultdict[str, int] = defaultdict(int)
-        for edge in ordered_edges:
-            out_degree[edge.source] += 1
-            in_degree[edge.target] += 1
+        in_degree, out_degree = _calculate_degrees(ordered_edges)
         cycles = _strongly_connected_components(identifiers, ordered_edges)
         findings = _architecture_findings(
             cycles, out_degree, ordered_edges, self._limits.max_fan_out
         )
         isolated = tuple(
-            sorted(node for node in identifiers if not in_degree[node] and not out_degree[node])
+            sorted(
+                node for node in identifiers if not in_degree.get(node) and not out_degree.get(node)
+            )
         )
         return DependencyGraph(
             nodes=nodes,
             edges=ordered_edges,
             cycles=cycles,
-            in_degree=dict(in_degree),
-            out_degree=dict(out_degree),
+            in_degree=in_degree,
+            out_degree=out_degree,
             isolated_nodes=isolated,
             findings=findings,
         )

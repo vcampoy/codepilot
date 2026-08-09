@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import re
 from collections.abc import Iterable
+from dataclasses import dataclass
 
 from codepilot.analyzers.risk_score import (
     FindingRisk,
@@ -20,49 +21,84 @@ from codepilot.github.contracts import (
 _HUNK_PATTERN = re.compile(r"^@@ -\d+(?:,\d+)? \+(\d+)(?:,(\d+))? @@")
 
 
-def parse_added_lines(diff: str) -> dict[str, tuple[tuple[int, int], ...]]:
-    """Return bounded added line ranges by file, excluding diff metadata."""
-    ranges: dict[str, list[tuple[int, int]]] = {}
+@dataclass
+class _AddedLineRangeCollector:
+    ranges: dict[str, list[tuple[int, int]]]
     current_file: str | None = None
-    current_line = 0
+    current_line: int = 0
     active_start: int | None = None
     active_end: int | None = None
 
-    def flush() -> None:
-        nonlocal active_start, active_end
-        if current_file is not None and active_start is not None and active_end is not None:
-            ranges.setdefault(current_file, []).append((active_start, active_end))
-        active_start = None
-        active_end = None
+    def flush(self) -> None:
+        if (
+            self.current_file is not None
+            and self.active_start is not None
+            and self.active_end is not None
+        ):
+            self.ranges.setdefault(self.current_file, []).append(
+                (self.active_start, self.active_end)
+            )
+        self.active_start = None
+        self.active_end = None
 
-    for line in diff.splitlines():
-        if line.startswith("diff --git "):
-            flush()
-            parts = line.split()
-            current_file = parts[3][2:] if len(parts) >= 4 and parts[3].startswith("b/") else None
-            continue
-        if line.startswith("+++ b/"):
-            flush()
-            current_file = line[6:]
-            continue
+    def _consume_diff_header(self, line: str) -> bool:
+        if not line.startswith("diff --git "):
+            return False
+        self.flush()
+        parts = line.split()
+        self.current_file = parts[3][2:] if len(parts) >= 4 and parts[3].startswith("b/") else None
+        return True
+
+    def _consume_new_file_header(self, line: str) -> bool:
+        if not line.startswith("+++ b/"):
+            return False
+        self.flush()
+        self.current_file = line[6:]
+        return True
+
+    def _consume_hunk_header(self, line: str) -> bool:
         hunk = _HUNK_PATTERN.match(line)
-        if hunk:
-            flush()
-            current_line = int(hunk.group(1))
-            continue
-        if current_file is None or line.startswith("--- ") or line.startswith("diff "):
-            continue
+        if hunk is None:
+            return False
+        self.flush()
+        self.current_line = int(hunk.group(1))
+        return True
+
+    def _consume_content(self, line: str) -> None:
+        if self.current_file is None or line.startswith("--- ") or line.startswith("diff "):
+            return
         if line.startswith("+") and not line.startswith("+++"):
-            active_start = current_line if active_start is None else active_start
-            active_end = current_line
-            current_line += 1
+            self.active_start = (
+                self.current_line if self.active_start is None else self.active_start
+            )
+            self.active_end = self.current_line
+            self.current_line += 1
         elif line.startswith("-"):
-            continue
+            return
         else:
-            flush()
-            current_line += 1
-    flush()
-    return {path: tuple(values) for path, values in ranges.items()}
+            self.flush()
+            self.current_line += 1
+
+    def consume(self, line: str) -> None:
+        if self._consume_diff_header(line):
+            return
+        if self._consume_new_file_header(line):
+            return
+        if self._consume_hunk_header(line):
+            return
+        self._consume_content(line)
+
+    def result(self) -> dict[str, tuple[tuple[int, int], ...]]:
+        self.flush()
+        return {path: tuple(values) for path, values in self.ranges.items()}
+
+
+def parse_added_lines(diff: str) -> dict[str, tuple[tuple[int, int], ...]]:
+    """Return bounded added line ranges by file, excluding diff metadata."""
+    collector = _AddedLineRangeCollector(ranges={})
+    for line in diff.splitlines():
+        collector.consume(line)
+    return collector.result()
 
 
 def compare_pull_request(

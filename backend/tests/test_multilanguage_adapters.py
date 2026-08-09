@@ -114,3 +114,32 @@ def test_sarif_file_analyzer_and_eslint_metadata(tmp_path: Path) -> None:
     assert sarif_result.execution is not None
     assert sarif_result.execution.tool == "sarif-import"
     assert EslintAnalyzer.metadata.supported_languages == frozenset({"javascript", "typescript"})
+
+
+def test_sarif_parser_flattens_multiple_runs_and_applies_defaults() -> None:
+    findings = parse_sarif_json(
+        json.dumps(
+            {
+                "version": "2.1.0",
+                "runs": [
+                    {"tool": {"driver": {"name": "Tool-A"}}, "results": []},
+                    {
+                        "tool": {"driver": {}},
+                        "results": [
+                            {
+                                "ruleId": "RULE-1",
+                                "message": {"text": "Problem"},
+                                "locations": [],
+                            }
+                        ],
+                    },
+                ],
+            }
+        )
+    )
+
+    assert len(findings) == 1
+    assert findings[0].analyzer == "SARIF"
+    assert findings[0].severity == "warning"
+    assert findings[0].path == "<unknown>"
+    assert findings[0].start_line == 1

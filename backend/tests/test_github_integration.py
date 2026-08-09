@@ -140,6 +140,27 @@ def test_diff_parser_returns_only_added_line_ranges() -> None:
     assert parse_added_lines(diff) == {"src/a.py": ((2, 3),)}
 
 
+def test_diff_parser_handles_multiple_files_and_hunks() -> None:
+    diff = """diff --git a/src/a.py b/src/a.py
+@@ -1,2 +1,3 @@
+ line one
++new one
+ line two
+@@ -8,1 +9,2 @@
+ context
++another one
+diff --git a/src/b.py b/src/b.py
+@@ -3,1 +3,1 @@
+-old
++replacement
+"""
+
+    assert parse_added_lines(diff) == {
+        "src/a.py": ((2, 2), (10, 10)),
+        "src/b.py": ((3, 3),),
+    }
+
+
 def test_app_authenticator_uses_short_lived_claims_without_logging_token() -> None:
     claims: dict[str, object] = {}
 

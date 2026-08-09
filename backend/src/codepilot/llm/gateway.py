@@ -113,7 +113,9 @@ class LiteLlmGateway:
                     return result
                 except LlmInvalidResponseError:
                     raise
-                except Exception as error:
+                # Optional provider SDKs expose incompatible exception classes;
+                # normalize at the boundary.
+                except Exception as error:  # noqa: BLE001
                     last_error = error
                     self._record_failure(task, model, started)
                     if not _is_retryable(error) or attempt == self._max_retries:

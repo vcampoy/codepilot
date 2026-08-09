@@ -94,6 +94,22 @@ def test_production_requires_tls_redis_urls() -> None:
         Settings(**settings)  # type: ignore[arg-type]
 
 
+def test_production_validation_keeps_error_order() -> None:
+    with pytest.raises(ValidationError) as error:
+        Settings(
+            environment="production",
+            log_format="console",
+            cors_origins=["*"],
+            llm_enabled=True,
+        )
+
+    message = str(error.value)
+    assert message.index("auth_required") < message.index("log_format")
+    assert message.index("log_format") < message.index("database_url")
+    assert message.index("database_url") < message.index("cors_origins")
+    assert message.index("cors_origins") < message.index("llm_provider")
+
+
 def test_celery_uses_injected_settings_without_exposing_credentials() -> None:
     settings = Settings(
         celery_broker_url=SecretStr("rediss://broker.internal:6380/2"),

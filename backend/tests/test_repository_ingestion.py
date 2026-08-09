@@ -171,6 +171,11 @@ def test_ingests_local_fixture_through_validated_public_url_and_cleans_up(tmp_pa
         "C:\\repositories\\repository",
         "https://localhost/acme/repository.git",
         "https://127.0.0.1/acme/repository.git",
+        "https://user@example.com/acme/repository.git",
+        "https://example.com/acme/repository.git?ref=main",
+        "https://example.com/acme/repository.git#fragment",
+        "https://example.com:8443/acme/repository.git",
+        "https://example.com/",
     ],
 )
 def test_rejects_unsupported_or_internal_repository_targets(tmp_path: Path, url: str) -> None:

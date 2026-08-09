@@ -36,3 +36,16 @@ def test_typescript_imports_are_structural_and_graph_pages_are_bounded(tmp_path:
 def test_extractors_ignore_unsupported_or_oversized_inputs(tmp_path: Path) -> None:
     (tmp_path / "data.txt").write_text("import b\n", encoding="utf-8")
     assert PythonImportExtractor().extract(tmp_path / "data.txt", tmp_path) == ()
+
+
+def test_builder_respects_node_and_edge_limits_for_mixed_sources(tmp_path: Path) -> None:
+    (tmp_path / "a.py").write_text("import b\n", encoding="utf-8")
+    (tmp_path / "b.py").write_text("value = 1\n", encoding="utf-8")
+    (tmp_path / "main.ts").write_text("import './b';\n", encoding="utf-8")
+    (tmp_path / "README.md").write_text("isolated\n", encoding="utf-8")
+
+    graph = DependencyGraphBuilder(GraphLimits(max_nodes=3, max_edges=1)).build(tmp_path)
+
+    assert len(graph.nodes) == 3
+    assert len(graph.edges) <= 1
+    assert all(edge.source in {node.identifier for node in graph.nodes} for edge in graph.edges)

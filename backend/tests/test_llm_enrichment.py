@@ -16,6 +16,7 @@ from codepilot.llm.contracts import (
     EvidenceFinding,
     ExplanationOutput,
     LlmInvalidResponseError,
+    LlmProviderError,
     LlmUsage,
     NoOpLlmGateway,
     ProviderCompletion,
@@ -195,4 +196,63 @@ def test_adapter_rejects_citations_not_present_in_evidence() -> None:
     gateway = LiteLlmGateway(model="test-model", api_key="test-key", completion=complete)
 
     with pytest.raises(LlmInvalidResponseError):
+        asyncio.run(gateway.enrich(EnrichmentTask.FILE_RISK, evidence()))
+
+
+@pytest.mark.parametrize("status_code", [429, 500])
+def test_adapter_retries_transient_http_failures(status_code: int) -> None:
+    calls = 0
+
+    class ProviderFailure(Exception):
+        def __init__(self) -> None:
+            self.status_code = status_code
+
+    async def complete(**_: object) -> ProviderCompletion:
+        nonlocal calls
+        calls += 1
+        raise ProviderFailure()
+
+    gateway = LiteLlmGateway(
+        model="test-model",
+        api_key="test-key",
+        completion=complete,
+        max_retries=1,
+    )
+
+    with pytest.raises(LlmProviderError):
+        asyncio.run(gateway.enrich(EnrichmentTask.FILE_RISK, evidence()))
+
+    assert calls == 2
+
+
+def test_adapter_wraps_non_retryable_provider_failure_with_cause() -> None:
+    failure = RuntimeError("provider rejected request")
+    calls = 0
+
+    async def complete(**_: object) -> ProviderCompletion:
+        nonlocal calls
+        calls += 1
+        raise failure
+
+    gateway = LiteLlmGateway(
+        model="test-model",
+        api_key="test-key",
+        completion=complete,
+        max_retries=2,
+    )
+
+    with pytest.raises(LlmProviderError) as error:
+        asyncio.run(gateway.enrich(EnrichmentTask.FILE_RISK, evidence()))
+
+    assert calls == 1
+    assert error.value.__cause__ is failure
+
+
+def test_adapter_propagates_cancellation_from_provider() -> None:
+    async def complete(**_: object) -> ProviderCompletion:
+        raise asyncio.CancelledError()
+
+    gateway = LiteLlmGateway(model="test-model", api_key="test-key", completion=complete)
+
+    with pytest.raises(asyncio.CancelledError):
         asyncio.run(gateway.enrich(EnrichmentTask.FILE_RISK, evidence()))
