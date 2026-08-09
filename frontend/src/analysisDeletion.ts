@@ -8,7 +8,10 @@ export type AnalysisDeletionResult = {
   failed: FailedAnalysisDeletion[]
 }
 
-export async function deleteAnalyses(ids: readonly string[], deleteAnalysis: (id: string) => Promise<void>): Promise<AnalysisDeletionResult> {
+export async function deleteAnalyses(
+  ids: readonly string[],
+  deleteAnalysis: (id: string) => Promise<void>,
+): Promise<AnalysisDeletionResult> {
   const results = await Promise.allSettled(ids.map((id) => deleteAnalysis(id)))
   return results.reduce<AnalysisDeletionResult>((result, outcome, index) => {
     const id = ids[index]

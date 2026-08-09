@@ -38,7 +38,10 @@ from codepilot.services.repository_ingestion import (
     RepositoryCloneError,
     RepositorySnapshot,
 )
-from codepilot.worker.analysis_tasks import create_analysis_task, create_stale_recovery_task
+from codepilot.worker.analysis_tasks import (
+    create_analysis_task,
+    create_stale_recovery_task,
+)
 from codepilot.worker.celery_app import create_celery_app
 
 

@@ -1,4 +1,3 @@
-# ruff: noqa: E501
 """HTTP endpoints for queued repository analyses."""
 
 from __future__ import annotations

@@ -17,7 +17,14 @@ export function ConfirmationDialog({ children, confirmLabel, open, title, busy =
       className="confirmation-dialog"
       footer={<>
         <button className="secondary-button" disabled={busy} onClick={onCancel} type="button">Cancel</button>
-        <button className="danger-button confirmation-dialog-confirm" disabled={busy} onClick={onConfirm} type="button">{busy ? 'Deleting...' : confirmLabel}</button>
+        <button
+          className="danger-button confirmation-dialog-confirm"
+          disabled={busy}
+          onClick={onConfirm}
+          type="button"
+        >
+          {busy ? 'Deleting...' : confirmLabel}
+        </button>
       </>}
       open={open}
       onCancel={onCancel}

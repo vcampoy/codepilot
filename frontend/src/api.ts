@@ -72,7 +72,10 @@ export interface FileInsight { path: string; hotspot_score: number; risk: RiskAs
 export interface FileDetail extends FileInsight { findings: AnalysisFinding[] }
 export interface AnalysisFilesResponse { items: FileInsight[]; total: number; limit: number; offset: number }
 
-export interface AnalyzerOutcome { analyzer: string; tool: string; version: string | null; status: string; duration_seconds: number; message: string | null; language?: string | null; generic?: boolean }
+export interface AnalyzerOutcome {
+  analyzer: string; tool: string; version: string | null; status: string; duration_seconds: number
+  message: string | null; language?: string | null; generic?: boolean
+}
 export interface AnalysisFinding {
   path: string
   rule_id: string

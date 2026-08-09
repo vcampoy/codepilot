@@ -64,13 +64,19 @@ function formatHotspot(hotspot: FileInsight, detail: FileDetail | null | undefin
 }
 
 function formatFinding(finding: FileDetail['findings'][number]): string {
-  const location = finding.start_line === finding.end_line ? `${finding.path}:${finding.start_line}` : `${finding.path}:${finding.start_line}-${finding.end_line}`
+  const location = finding.start_line === finding.end_line
+    ? `${finding.path}:${finding.start_line}`
+    : `${finding.path}:${finding.start_line}-${finding.end_line}`
+  const remediation = finding.remediation?.trim()
+    ? escapeInline(finding.remediation)
+    : '_Not provided by analyzer._'
   return [
-    `- **${escapeInline(finding.severity)}** ${escapeInline(finding.rule_id)} at ${escapeInline(location)} (${escapeInline(finding.analyzer)}): ${escapeInline(finding.message)}`,
+    `- **${escapeInline(finding.severity)}** ${escapeInline(finding.rule_id)} at ${escapeInline(location)} `
+      + `(${escapeInline(finding.analyzer)}): ${escapeInline(finding.message)}`,
     `  - Title: ${finding.title?.trim() ? escapeInline(finding.title) : '_Not provided by analyzer._'}`,
     `  - Type: ${escapeInline(finding.category?.trim() || 'Other')}`,
     `  - Evidence: ${finding.evidence?.trim() ? escapeInline(finding.evidence) : '_Not provided by analyzer._'}`,
-    `  - Remediation: ${finding.remediation?.trim() ? escapeInline(finding.remediation) : '_Not provided by analyzer._'}`,
+    `  - Remediation: ${remediation}`,
   ].join('\n')
 }
 
