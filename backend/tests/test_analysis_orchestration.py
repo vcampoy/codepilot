@@ -20,6 +20,8 @@ from codepilot.domain.analysis import (
     AnalysisStatus,
     AnalysisSummary,
     InvalidAnalysisTransitionError,
+    SourceContext,
+    SourceLine,
     fingerprint_finding,
 )
 from codepilot.repositories.analysis import InMemoryAnalysisRepository
@@ -315,6 +317,10 @@ def test_legacy_finding_is_upgraded_without_duplicate_on_new_analyzer_identity()
             start_line=legacy.start_line,
             end_line=legacy.end_line,
             analyzer="python.ruff",
+            title="Unsafe call",
+            evidence="Call expression",
+            remediation="Use safe API",
+            source_context=SourceContext(7, 9, (SourceLine(8, "unsafe()", True),)),
         )
         count = await repository.persist_findings(record.analysis_id, (current,), lease_token=lease)
         return count, await repository.get_findings(record.analysis_id)
@@ -323,6 +329,10 @@ def test_legacy_finding_is_upgraded_without_duplicate_on_new_analyzer_identity()
     assert count == 1
     assert len(findings) == 1
     assert findings[0].analyzer == "python.ruff"
+    assert findings[0].title == "Unsafe call"
+    assert findings[0].evidence == "Call expression"
+    assert findings[0].remediation == "Use safe API"
+    assert findings[0].source_context is not None
 
 
 def test_transient_failure_is_publicly_safe_and_requeued() -> None:

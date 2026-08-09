@@ -51,7 +51,11 @@ export interface AnalysisFinding {
   title?: string | null
   evidence?: string | null
   remediation?: string | null
+  source_context?: SourceContext | null
 }
+
+export interface SourceContextLine { number: number; text: string; highlighted?: boolean }
+export interface SourceContext { start_line: number; end_line: number; lines: SourceContextLine[] }
 
 export interface AnalyzerAvailability {
   analyzer: string

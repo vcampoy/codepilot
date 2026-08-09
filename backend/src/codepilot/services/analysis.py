@@ -34,6 +34,7 @@ from codepilot.services.repository_ingestion import (
     RepositoryTimeoutError,
     RepositoryWorkspaceError,
 )
+from codepilot.services.source_context import enrich_findings_with_source_context
 
 LOGGER = logging.getLogger(__name__)
 
@@ -236,6 +237,19 @@ class AnalysisService:
         try:
             async with self._ingestion.ingest(record.repository_url) as snapshot:
                 result = await self._analyzer.analyze(snapshot)
+                enriched_findings = await asyncio.to_thread(
+                    enrich_findings_with_source_context,
+                    snapshot.repository_path,
+                    result.findings,
+                )
+                result = AnalysisResult(
+                    result.analyzed_file_count,
+                    result.source_lines,
+                    enriched_findings,
+                    result.analyzer_outcomes,
+                    result.enforce_execution,
+                    result.file_insights,
+                )
                 if result.enforce_execution and not result.execution_succeeded:
                     raise NoAnalyzerExecutedError("No required analyzer could execute.")
                 await self._repository.persist_findings(

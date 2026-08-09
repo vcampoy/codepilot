@@ -47,6 +47,8 @@ from codepilot.domain.analysis import (
     AnalysisSummary,
     AnalyzerOutcome,
     InvalidAnalysisTransitionError,
+    SourceContext,
+    SourceLine,
     fingerprint_finding,
 )
 from codepilot.domain.insights import FileInsight
@@ -492,6 +494,7 @@ _FINDINGS = Table(
     Column("title", String(512)),
     Column("evidence", Text),
     Column("remediation", Text),
+    Column("source_context", JSON),
     UniqueConstraint("analysis_id", "fingerprint", name="uq_analysis_finding_fingerprint"),
 )
 _FILE_INSIGHTS = Table(
@@ -716,6 +719,7 @@ class PostgresAnalysisRepository:
                 "title": finding.title,
                 "evidence": finding.evidence,
                 "remediation": finding.remediation,
+                "source_context": _source_context_to_json(finding.source_context),
             }
             for finding in findings
         ]
@@ -750,7 +754,14 @@ class PostgresAnalysisRepository:
                 await connection.execute(
                     update(_FINDINGS)
                     .where(_FINDINGS.c.id == legacy_id)
-                    .values(analyzer=finding.analyzer, fingerprint=value["fingerprint"])
+                    .values(
+                        analyzer=finding.analyzer,
+                        fingerprint=value["fingerprint"],
+                        title=value["title"],
+                        evidence=value["evidence"],
+                        remediation=value["remediation"],
+                        source_context=value["source_context"],
+                    )
                 )
                 upgraded += 1
             if not insert_values:
@@ -991,7 +1002,41 @@ def _finding_from_row(row: Any) -> AnalysisFinding:
         title=cast(str | None, row.get("title")),
         evidence=cast(str | None, row.get("evidence")),
         remediation=cast(str | None, row.get("remediation")),
+        source_context=_source_context_from_json(row.get("source_context")),
     )
+
+
+def _source_context_to_json(context: SourceContext | None) -> dict[str, object] | None:
+    if context is None:
+        return None
+    return {
+        "start_line": context.start_line,
+        "end_line": context.end_line,
+        "lines": [
+            {"number": line.number, "text": line.text, "highlighted": line.highlighted}
+            for line in context.lines
+        ],
+    }
+
+
+def _source_context_from_json(value: Any) -> SourceContext | None:
+    if not isinstance(value, dict):
+        return None
+    try:
+        return SourceContext(
+            start_line=int(value["start_line"]),
+            end_line=int(value["end_line"]),
+            lines=tuple(
+                SourceLine(
+                    number=int(item["number"]),
+                    text=str(item["text"]),
+                    highlighted=bool(item.get("highlighted", False)),
+                )
+                for item in value.get("lines", [])
+            ),
+        )
+    except (KeyError, TypeError, ValueError):
+        return None
 
 
 def _finding_identity(finding: AnalysisFinding) -> tuple[object, ...]:

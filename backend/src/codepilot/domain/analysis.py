@@ -34,6 +34,24 @@ class AnalysisNotFoundError(Exception):
 
 
 @dataclass(frozen=True, slots=True)
+class SourceLine:
+    """One bounded, numbered source line persisted with a finding."""
+
+    number: int
+    text: str
+    highlighted: bool = False
+
+
+@dataclass(frozen=True, slots=True)
+class SourceContext:
+    """Small source window around a finding; never the complete file."""
+
+    start_line: int
+    end_line: int
+    lines: tuple[SourceLine, ...]
+
+
+@dataclass(frozen=True, slots=True)
 class AnalysisFinding:
     """A finding produced by an analyzer without repository content."""
 
@@ -48,6 +66,7 @@ class AnalysisFinding:
     title: str | None = None
     evidence: str | None = None
     remediation: str | None = None
+    source_context: SourceContext | None = None
 
 
 @dataclass(frozen=True, slots=True)

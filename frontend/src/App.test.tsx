@@ -261,6 +261,40 @@ describe('completed analysis result loading', () => {
     expect(screen.getByText('0.80')).toBeInTheDocument()
   })
 
+  it('renders bounded source context, highlighted range, evidence, and remediation', async () => {
+    configureCompletedRun()
+    const contextualFinding = {
+      ...finding,
+      start_line: 3,
+      end_line: 3,
+      evidence: 'Unsafe call',
+      remediation: 'Use a safe parser.',
+      source_context: {
+        start_line: 1,
+        end_line: 5,
+        lines: [
+          { number: 1, text: 'one' },
+          { number: 2, text: 'two' },
+          { number: 3, text: 'eval(x)', highlighted: true },
+          { number: 4, text: 'four' },
+          { number: 5, text: 'five' },
+        ],
+      },
+    }
+    fixtures.getAnalysisFindings.mockResolvedValue([contextualFinding])
+    fixtures.getAnalysisHotspots.mockResolvedValue([insight])
+    fixtures.getAnalysisFiles.mockResolvedValue({ items: [insight], total: 1, limit: 100, offset: 0 })
+    fixtures.getAnalysisFileDetail.mockResolvedValue({ ...insight, findings: [contextualFinding] })
+
+    render(<App />)
+    fireEvent.submit(screen.getByRole('button', { name: 'Analyze repository' }).closest('form')!, { preventDefault: () => undefined })
+    fireEvent.click(await screen.findByRole('button', { name: 'File detail' }))
+    await waitFor(() => expect(screen.getByText('eval(x)')).toBeInTheDocument())
+    expect(screen.getByText('Unsafe call')).toBeInTheDocument()
+    expect(screen.getByText('Use a safe parser.')).toBeInTheDocument()
+    expect(screen.getByText('eval(x)').closest('.source-line')).toHaveClass('source-line-highlight')
+  })
+
   it('renders configured quality-gate pass and failure states', async () => {
     configureCompletedRun()
     fixtures.getAnalysisFindings.mockResolvedValue([finding])

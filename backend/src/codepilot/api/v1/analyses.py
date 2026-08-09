@@ -15,7 +15,12 @@ from codepilot.analyzers.risk_score import (
 )
 from codepilot.core.auth import authenticate
 from codepilot.core.errors import ApplicationError
-from codepilot.domain.analysis import AnalysisFinding, AnalysisNotFoundError, AnalysisRecord
+from codepilot.domain.analysis import (
+    AnalysisFinding,
+    AnalysisNotFoundError,
+    AnalysisRecord,
+    SourceContext,
+)
 from codepilot.domain.insights import FileInsight, select_hotspots
 from codepilot.llm.contracts import EnrichmentResult, EnrichmentTask, LlmError
 from codepilot.services.analysis import AnalysisEnqueueError, AnalysisService
@@ -100,6 +105,7 @@ class AnalysisFindingResponse(BaseModel):
     title: str | None
     evidence: str | None
     remediation: str | None
+    source_context: dict[str, object] | None = None
 
 
 class FileInsightResponse(BaseModel):
@@ -341,6 +347,7 @@ async def analysis_findings(analysis_id: UUID, request: Request) -> list[Analysi
             title=finding.title,
             evidence=finding.evidence,
             remediation=finding.remediation,
+            source_context=_source_context_response(finding.source_context),
         )
         for finding in findings
     ]
@@ -414,4 +421,19 @@ def _finding_response(finding: object) -> AnalysisFindingResponse:
         title=item.title,
         evidence=item.evidence,
         remediation=item.remediation,
+        source_context=_source_context_response(item.source_context),
     )
+
+
+def _source_context_response(context: object) -> dict[str, object] | None:
+    if context is None:
+        return None
+    item = cast(SourceContext, context)
+    return {
+        "start_line": item.start_line,
+        "end_line": item.end_line,
+        "lines": [
+            {"number": line.number, "text": line.text, "highlighted": line.highlighted}
+            for line in item.lines
+        ],
+    }

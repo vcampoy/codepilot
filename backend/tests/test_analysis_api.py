@@ -228,6 +228,7 @@ def test_findings_endpoint_returns_persisted_findings_and_summary_outcomes() -> 
             "title": "Avoid this pattern",
             "evidence": "The rule matched this expression.",
             "remediation": "Refactor the expression.",
+            "source_context": None,
         }
     ]
     assert summary.json()["summary"]["analyzer_outcomes"][0]["analyzer"] == "generic.file-metrics"
