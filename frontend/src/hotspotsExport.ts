@@ -20,7 +20,10 @@ export function createHotspotsMarkdownExport(input: HotspotsMarkdownExportInput)
   const timestamp = formatLocalTimestamp(input.exportedAt)
   const details = input.details ?? {}
   const metadata = input.filters && input.sort
-    ? [`- Risk filter: ${input.filters.risks.length > 0 ? input.filters.risks.join(', ') : 'All'}`, `- Sort: ${formatSort(input.sort)}`]
+    ? [
+        `- Risk filter: ${input.filters.risks.length > 0 ? input.filters.risks.join(', ') : 'All'}`,
+        `- Sort: ${formatSort(input.sort)}`,
+      ]
     : []
   const sections = input.hotspots
     .map((hotspot, index) => formatHotspot(hotspot, details[hotspot.path], index + 1))

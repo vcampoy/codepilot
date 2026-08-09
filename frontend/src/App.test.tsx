@@ -287,8 +287,18 @@ describe('analysis history and quality KPI', () => {
 
   it('preserves an unknown persisted model in the dropdown and saves the selected model', async () => {
     configureCompletedRun()
-    fixtures.getLlmConfiguration.mockResolvedValue({ enabled: true, provider: 'openai', model: 'future-model', api_key_configured: true })
-    fixtures.saveLlmConfiguration.mockResolvedValue({ enabled: true, provider: 'openai', model: 'gpt-4o', api_key_configured: true })
+    fixtures.getLlmConfiguration.mockResolvedValue({
+      enabled: true,
+      provider: 'openai',
+      model: 'future-model',
+      api_key_configured: true,
+    })
+    fixtures.saveLlmConfiguration.mockResolvedValue({
+      enabled: true,
+      provider: 'openai',
+      model: 'gpt-4o',
+      api_key_configured: true,
+    })
     render(<App />)
     fireEvent.submit(screen.getByRole('button', { name: 'Analyze repository' }).closest('form')!, { preventDefault: () => undefined })
     fireEvent.click(await screen.findByRole('button', { name: 'Quality gate' }))
@@ -532,7 +542,10 @@ describe('completed analysis result loading', () => {
     }))
 
     render(<App />)
-    fireEvent.submit(screen.getByRole('button', { name: 'Analyze repository' }).closest('form')!, { preventDefault: () => undefined })
+    fireEvent.submit(
+      screen.getByRole('button', { name: 'Analyze repository' }).closest('form')!,
+      { preventDefault: () => undefined },
+    )
     fireEvent.click(await screen.findByRole('button', { name: 'File detail' }))
     const findingButton = await screen.findByRole('button', { name: /PY001/ })
     fireEvent.click(findingButton)
@@ -626,10 +639,40 @@ describe('completed analysis result loading', () => {
     fixtures.getAnalysisFindings.mockResolvedValue([finding])
     fixtures.getAnalysisHotspots.mockResolvedValue([insight])
     fixtures.getAnalysisFiles.mockResolvedValue({ items: [insight], total: 1, limit: 100, offset: 0 })
-    fixtures.getProjects.mockResolvedValue({ items: [{ project_id: 'project-1', repository_url: 'https://github.com/acme/demo', name: 'demo', created_at: '', updated_at: '' }] })
-    fixtures.getQualityPolicy.mockResolvedValue({ version: 1, configured: false, max_new_critical_findings: null, max_risk_score: null, max_new_hotspots: null, profiles: [] })
-    fixtures.saveQualityPolicy.mockResolvedValue({ version: 2, configured: true, max_new_critical_findings: 1, max_risk_score: 0.5, max_new_hotspots: 2, profiles: [] })
-    fixtures.importQualityProfile.mockResolvedValue({ language: 'python', profile_name: 'py', mapped: 1, unsupported: [], invalid: [] })
+    fixtures.getProjects.mockResolvedValue({
+      items: [
+        {
+          project_id: 'project-1',
+          repository_url: 'https://github.com/acme/demo',
+          name: 'demo',
+          created_at: '',
+          updated_at: '',
+        },
+      ],
+    })
+    fixtures.getQualityPolicy.mockResolvedValue({
+      version: 1,
+      configured: false,
+      max_new_critical_findings: null,
+      max_risk_score: null,
+      max_new_hotspots: null,
+      profiles: [],
+    })
+    fixtures.saveQualityPolicy.mockResolvedValue({
+      version: 2,
+      configured: true,
+      max_new_critical_findings: 1,
+      max_risk_score: 0.5,
+      max_new_hotspots: 2,
+      profiles: [],
+    })
+    fixtures.importQualityProfile.mockResolvedValue({
+      language: 'python',
+      profile_name: 'py',
+      mapped: 1,
+      unsupported: [],
+      invalid: [],
+    })
     render(<App />)
     fireEvent.change(screen.getByLabelText('Repository URL'), { target: { value: 'https://github.com/acme/demo' } })
     fireEvent.submit(screen.getByRole('button', { name: 'Analyze repository' }).closest('form')!, { preventDefault: () => undefined })

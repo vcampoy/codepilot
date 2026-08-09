@@ -83,7 +83,8 @@ class _LocalGitClient:
             raise RepositoryCancelledError()
         if self._failure is not None:
             raise self._failure
-        subprocess.run(
+        await asyncio.to_thread(
+            subprocess.run,
             ["git", "clone", "--depth", "1", "--no-tags", str(self._source_path), str(destination)],
             check=True,
             capture_output=True,
@@ -94,7 +95,8 @@ class _LocalGitClient:
         self, repository_path: Path, _cancellation_event: asyncio.Event | None = None
     ) -> str:
         # The executable and arguments are test-owned constants for this local fixture.
-        completed = subprocess.run(  # nosec B607
+        completed = await asyncio.to_thread(
+            subprocess.run,  # nosec B607
             ["git", "-C", str(repository_path), "rev-parse", "HEAD"],
             check=True,
             capture_output=True,
@@ -105,7 +107,9 @@ class _LocalGitClient:
     async def resolve_default_branch(
         self, repository_path: Path, _cancellation_event: asyncio.Event | None = None
     ) -> str | None:
-        completed = subprocess.run(
+        # The executable and arguments are test-owned constants for this local fixture.
+        completed = await asyncio.to_thread(
+            subprocess.run,  # nosec B607, B603
             [
                 "git",
                 "-C",

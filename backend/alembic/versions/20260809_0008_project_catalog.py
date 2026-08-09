@@ -29,14 +29,28 @@ def upgrade() -> None:
     op.add_column("codepilot_analyses", sa.Column("project_id", postgresql.UUID(as_uuid=True), nullable=True))
     op.create_foreign_key("fk_analysis_project", "codepilot_analyses", "codepilot_projects", ["project_id"], ["project_id"])
     bind = op.get_bind()
-    rows = bind.execute(sa.text("SELECT workspace_id, min(repository_url) AS repository_url, min(created_at) AS created_at, max(created_at) AS updated_at FROM codepilot_analyses GROUP BY workspace_id, lower(regexp_replace(regexp_replace(repository_url, '/$', ''), '\\.git$', ''))")).mappings()
+    project_rows_query = (
+        "SELECT workspace_id, min(repository_url) AS repository_url, "
+        "min(created_at) AS created_at, max(created_at) AS updated_at "
+        "FROM codepilot_analyses GROUP BY workspace_id, "
+        "lower(regexp_replace(regexp_replace(repository_url, '/$', ''), '\\.git$', ''))"
+    )
+    rows = bind.execute(sa.text(project_rows_query)).mappings()
     for row in rows:
         url = str(row["repository_url"])
         key = url.strip().lower().rstrip("/").removesuffix(".git")
         name = url.rstrip("/").rsplit("/", 1)[-1].removesuffix(".git") or url
         project_id = uuid4()
         bind.execute(sa.text("INSERT INTO codepilot_projects (project_id, workspace_id, repository_url, repository_key, name, created_at, updated_at) VALUES (:id, :workspace, :url, :key, :name, :created, :updated)"), {"id": project_id, "workspace": row["workspace_id"], "url": url, "key": key, "name": name, "created": row["created_at"], "updated": row["updated_at"]})
-        bind.execute(sa.text("UPDATE codepilot_analyses SET project_id = :id WHERE workspace_id = :workspace AND lower(regexp_replace(regexp_replace(repository_url, '/$', ''), '\\.git$', '')) = :key"), {"id": project_id, "workspace": row["workspace_id"], "key": key})
+        analysis_update_query = (
+            "UPDATE codepilot_analyses SET project_id = :id "
+            "WHERE workspace_id = :workspace AND "
+            "lower(regexp_replace(regexp_replace(repository_url, '/$', ''), '\\.git$', '')) = :key"
+        )
+        bind.execute(
+            sa.text(analysis_update_query),
+            {"id": project_id, "workspace": row["workspace_id"], "key": key},
+        )
 
 
 def downgrade() -> None:

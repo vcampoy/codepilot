@@ -165,7 +165,8 @@ export function getProjects(limit = 20, offset = 0): Promise<ProjectListResponse
 }
 
 export function getProjectAnalyses(projectId: string, limit = 20, offset = 0): Promise<AnalysisRunListResponse> {
-  return request<AnalysisRunListResponse>(`/api/v1/projects/${encodeURIComponent(projectId)}/analyses?limit=${limit}&offset=${offset}`)
+  const path = `/api/v1/projects/${encodeURIComponent(projectId)}/analyses?limit=${limit}&offset=${offset}`
+  return request<AnalysisRunListResponse>(path)
 }
 
 export function getAnalysisHistory(limit = 20, offset = 0): Promise<AnalysisHistoryResponse> {
