@@ -654,7 +654,9 @@ function WorkspaceContent(props: WorkspaceViewProps) {
       return (
         <QualityGateView
           summary={props.summary}
-          projectId={props.projects.find((project) => project.repository_url === props.analyzedRepositoryUrl)?.project_id ?? null}
+          projectId={
+            props.projects.find((project) => project.repository_url === props.analyzedRepositoryUrl)?.project_id ?? null
+          }
           onNavigate={props.navigate}
         />
       )
@@ -684,19 +686,38 @@ function FindingsView({
   const [draftFilters, setDraftFilters] = useState<FindingFilters>({ severities: [], types: [] })
   const [filterDialogOpen, setFilterDialogOpen] = useState(false)
   const availableTypes = useMemo(
-    () => [...new Set(findings.map((finding) => categoryLabel(finding.category)))].sort((left, right) => left.localeCompare(right)),
+    () =>
+      [...new Set(findings.map((finding) => categoryLabel(finding.category)))].sort((left, right) =>
+        left.localeCompare(right),
+      ),
     [findings],
   )
 
   if (status === 'failed') {
     const noAnalyzerEvidence = error === 'No compatible analyzer could execute.'
-    return <EmptyState title={noAnalyzerEvidence ? 'No analyzers ran' : 'Analysis failed'} description={error || 'The analysis could not be completed.'} />
+    return (
+      <EmptyState
+        title={noAnalyzerEvidence ? 'No analyzers ran' : 'Analysis failed'}
+        description={error || 'The analysis could not be completed.'}
+      />
+    )
   }
-  if (status !== 'completed') return <EmptyState title="Findings pending" description="Findings appear after deterministic analysis completes." />
+  if (status !== 'completed') {
+    return <EmptyState title="Findings pending" description="Findings appear after deterministic analysis completes." />
+  }
   if (findings.length === 0) {
     const outcomes = summary?.analyzer_outcomes ?? []
     const genericOnly = outcomes.length > 0 && outcomes.every((item) => item.generic || item.status === 'not_requested')
-    return <EmptyState title="0 findings; analysis completed successfully" description={genericOnly ? 'Only generic analyzers ran; no language-specific analyzer was applicable.' : 'No deterministic analyzer reported a finding.'} />
+    return (
+      <EmptyState
+        title="0 findings; analysis completed successfully"
+        description={
+          genericOnly
+            ? 'Only generic analyzers ran; no language-specific analyzer was applicable.'
+            : 'No deterministic analyzer reported a finding.'
+        }
+      />
+    )
   }
   const exportFindings = () => {
     if (!repositoryUrl || !analysisId) return
@@ -841,10 +862,18 @@ function FindingsView({
               <thead>
                 <tr>
                   {FINDING_COLUMNS.filter(({ key }) => visibleColumns.includes(key)).map(({ key, label }) => (
-                    <th aria-sort={sort.column === key ? (sort.direction === 'asc' ? 'ascending' : 'descending') : 'none'} key={key} scope="col">
+                    <th
+                      aria-sort={sort.column === key ? (sort.direction === 'asc' ? 'ascending' : 'descending') : 'none'}
+                      key={key}
+                      scope="col"
+                    >
                       <button className="table-sort-button" onClick={() => toggleSort(key)} type="button">
                         {label}
-                        {sort.column === key && <span aria-hidden="true" className="sort-indicator">{sort.direction === 'asc' ? 'asc' : 'desc'}</span>}
+                        {sort.column === key && (
+                          <span aria-hidden="true" className="sort-indicator">
+                            {sort.direction === 'asc' ? 'asc' : 'desc'}
+                          </span>
+                        )}
                       </button>
                     </th>
                   ))}
@@ -872,7 +901,11 @@ function FindingsView({
                           <span>{finding.rule_id} · {finding.analyzer}</span>
                         </small>
                       </td>}
-                      {visibleColumns.includes('severity') && <td data-label="Severity"><span className={`severity-badge severity-${severity}`}>{severity}</span></td>}
+                      {visibleColumns.includes('severity') && (
+                        <td data-label="Severity">
+                          <span className={`severity-badge severity-${severity}`}>{severity}</span>
+                        </td>
+                      )}
                       {visibleColumns.includes('type') && (
                         <td data-label="Type">
                           <span className="category-badge">{categoryLabel(finding.category)}</span>
@@ -1057,7 +1090,11 @@ function HistoryView({
         result.deleted.forEach((id) => next.delete(id))
         return next
       })
-      if (result.failed.length > 0) setDeleteError(`${result.failed.length} analysis${result.failed.length === 1 ? '' : 'es'} could not be deleted.`)
+      if (result.failed.length > 0) {
+        setDeleteError(
+          `${result.failed.length} analysis${result.failed.length === 1 ? '' : 'es'} could not be deleted.`,
+        )
+      }
       setConfirmationIds(null)
     } catch (deleteError) {
       setDeleteError(deleteError instanceof Error ? deleteError.message : 'Analysis could not be deleted.')
@@ -1205,7 +1242,8 @@ function HistoryView({
       >
         {confirmationIds?.length === 1
           ? 'This analysis and its stored evidence will be deleted. This cannot be undone.'
-          : `This will permanently delete ${confirmationIds?.length ?? 0} analyses and their stored evidence. This cannot be undone.`}
+          : `This will permanently delete ${confirmationIds?.length ?? 0} analyses and their stored evidence. ` +
+            'This cannot be undone.'}
       </ConfirmationDialog>
     </section>
   )
@@ -1275,7 +1313,9 @@ function HotspotsView({
       setExportBusy(false)
     }
   }
-  if (status !== 'completed') return <EmptyState title="Hotspots pending" description="Hotspots appear after deterministic analysis completes." />
+  if (status !== 'completed') {
+    return <EmptyState title="Hotspots pending" description="Hotspots appear after deterministic analysis completes." />
+  }
   if (error && hotspots.length === 0) return <EmptyState title="Hotspots unavailable" description={error} />
   if (hotspots.length === 0) {
     return <EmptyState title="No hotspots" description="No file reached the configured hotspot threshold." />
@@ -1341,7 +1381,11 @@ function HotspotsView({
               <thead>
                 <tr>
                   {HOTSPOT_COLUMNS.map(({ key, label }) => (
-                    <th aria-sort={sort.column === key ? (sort.direction === 'asc' ? 'ascending' : 'descending') : 'none'} key={key} scope="col">
+                    <th
+                      aria-sort={sort.column === key ? (sort.direction === 'asc' ? 'ascending' : 'descending') : 'none'}
+                      key={key}
+                      scope="col"
+                    >
                       <button
                         className="table-sort-button"
                         onClick={() =>
@@ -1350,7 +1394,11 @@ function HotspotsView({
                         type="button"
                       >
                         {label}
-                        {sort.column === key && <span aria-hidden="true" className="sort-indicator">{sort.direction === 'asc' ? 'asc' : 'desc'}</span>}
+                        {sort.column === key && (
+                          <span aria-hidden="true" className="sort-indicator">
+                            {sort.direction === 'asc' ? 'asc' : 'desc'}
+                          </span>
+                        )}
                       </button>
                     </th>
                   ))}
@@ -1369,7 +1417,11 @@ function HotspotsView({
                       </button>
                     </td>
                     <td>{hotspot.hotspot_score.toFixed(2)}</td>
-                    <td>{hotspot.risk ? `${hotspot.risk.score.toFixed(2)} (${hotspotRisk(hotspot)})` : 'Unavailable'}</td>
+                    <td>
+                      {hotspot.risk
+                        ? `${hotspot.risk.score.toFixed(2)} (${hotspotRisk(hotspot)})`
+                        : 'Unavailable'}
+                    </td>
                     <td>{formatHotspotComponents(hotspot)}</td>
                   </tr>
                 ))}
@@ -1448,9 +1500,77 @@ function FindingDetailCard({
       )}
       <div className="finding-meta">
         <div><strong>Evidence</strong><p>{finding.evidence || 'Evidence unavailable.'}</p></div>
-        <div><strong>Remediation</strong><p>{finding.remediation || 'No remediation was provided by the analyzer.'}</p></div>
+        <div>
+          <strong>Remediation</strong>
+          <p>{finding.remediation || 'No remediation was provided by the analyzer.'}</p>
+        </div>
       </div>
     </article>
+  )
+}
+
+function FileMetricGrid({ detail }: { detail: FileDetail }) {
+  return (
+    <div className="metric-grid">
+      <article className="metric-card">
+        <span>Hotspot score</span>
+        <strong>{detail.hotspot_score.toFixed(2)}</strong>
+        <small>History and finding evidence</small>
+      </article>
+      <article className="metric-card">
+        <span>Risk</span>
+        <strong>{detail.risk ? detail.risk.score.toFixed(2) : '—'}</strong>
+        <small>{detail.risk ? `${detail.risk.category} · v${detail.risk.version}` : 'Unavailable'}</small>
+      </article>
+      <article className="metric-card">
+        <span>Findings</span>
+        <strong>{detail.findings.length}</strong>
+        <small>Stored analyzer evidence</small>
+      </article>
+    </div>
+  )
+}
+
+function FileRiskComponents({ risk }: { risk: FileDetail['risk'] }) {
+  return (
+    <div className="panel">
+      <div className="panel-title"><span>Risk components</span><span className="muted">Normalized values</span></div>
+      {Object.entries(risk?.components ?? {}).map(([name, value]) => (
+        <div className="availability-row" key={name}>
+          <span>{name}</span>
+          <strong>{value.toFixed(2)}</strong>
+        </div>
+      ))}
+    </div>
+  )
+}
+
+function FileFindingsPanel({
+  detail,
+  expandedFindingKey,
+  onToggle,
+}: {
+  detail: FileDetail
+  expandedFindingKey: string | null
+  onToggle: (key: string) => void
+}) {
+  return (
+    <div className="panel">
+      <div className="panel-title"><span>Findings in file</span></div>
+      {detail.findings.length
+        ? detail.findings.map((finding, index) => {
+            const findingKey = findingDisclosureKey(detail.path, finding, index)
+            return (
+              <FindingDetailCard
+                expanded={expandedFindingKey === findingKey}
+                finding={finding}
+                key={findingKey}
+                onToggle={() => onToggle(findingKey)}
+              />
+            )
+          })
+        : <EmptyState title="No findings" description="No finding is attached to this file." compact />}
+    </div>
   )
 }
 
@@ -1483,7 +1603,9 @@ function FileDetailView({
       />
     )
   }
-  if (catalogError && files.length === 0 && !path) return <EmptyState title="File catalog unavailable" description={catalogError} />
+  if (catalogError && files.length === 0 && !path) {
+    return <EmptyState title="File catalog unavailable" description={catalogError} />
+  }
   if (!path && files.length === 0) {
     return (
       <EmptyState
@@ -1493,7 +1615,14 @@ function FileDetailView({
     )
   }
   if (busy) return <EmptyState title="Loading file detail" description={`Loading evidence for ${path}.`} />
-  if (error || !detail) return <EmptyState title="File detail unavailable" description={error || 'No stored evidence exists for this file.'} />
+  if (error || !detail) {
+    return (
+      <EmptyState
+        title="File detail unavailable"
+        description={error || 'No stored evidence exists for this file.'}
+      />
+    )
+  }
   return (
     <section className="page-grid">
       <div className="panel file-picker">
@@ -1506,42 +1635,267 @@ function FileDetailView({
         <div><p className="kicker">File evidence</p><h2><code>{detail.path}</code></h2></div>
         <span className="status-badge status-completed">completed</span>
       </div>
-      <div className="metric-grid">
-        <article className="metric-card"><span>Hotspot score</span><strong>{detail.hotspot_score.toFixed(2)}</strong><small>History and finding evidence</small></article>
-        <article className="metric-card">
-          <span>Risk</span>
-          <strong>{detail.risk ? detail.risk.score.toFixed(2) : '—'}</strong>
-          <small>{detail.risk ? `${detail.risk.category} · v${detail.risk.version}` : 'Unavailable'}</small>
-        </article>
-        <article className="metric-card"><span>Findings</span><strong>{detail.findings.length}</strong><small>Stored analyzer evidence</small></article>
-      </div>
-      <div className="panel">
-        <div className="panel-title"><span>Risk components</span><span className="muted">Normalized values</span></div>
-        {Object.entries(detail.risk?.components ?? {}).map(([name, value]) => (
-          <div className="availability-row" key={name}>
-            <span>{name}</span>
-            <strong>{value.toFixed(2)}</strong>
-          </div>
-        ))}
-      </div>
-      <div className="panel">
-        <div className="panel-title"><span>Findings in file</span></div>
-        {detail.findings.length
-          ? detail.findings.map((finding, index) => {
-            const findingKey = findingDisclosureKey(detail.path, finding, index)
-            return (
-              <FindingDetailCard
-                expanded={expandedFindingKey === findingKey}
-                finding={finding}
-                key={findingKey}
-                onToggle={() => setExpandedFindingKey((current) => current === findingKey ? null : findingKey)}
-              />
-            )
-          })
-          : <EmptyState title="No findings" description="No finding is attached to this file." compact />}
-      </div>
+      <FileMetricGrid detail={detail} />
+      <FileRiskComponents risk={detail.risk} />
+      <FileFindingsPanel
+        detail={detail}
+        expandedFindingKey={expandedFindingKey}
+        onToggle={(findingKey) => setExpandedFindingKey((current) => current === findingKey ? null : findingKey)}
+      />
     </section>
   )
+}
+
+type LlmPanelProps = {
+  llm: LlmConfiguration | null
+  llmProvider: string
+  llmModel: string
+  llmModelOptions: string[]
+  llmKey: string
+  llmEnabled: boolean
+  llmLoadError: string | null
+  llmLoading: boolean
+  llmSaving: boolean
+  llmMessage: string | null
+  setLlmProvider: (value: string) => void
+  setLlmModel: (value: string) => void
+  setLlmModelOptions: (value: string[]) => void
+  setLlmKey: (value: string) => void
+  setLlmEnabled: (value: boolean) => void
+  saveLlm: () => void
+}
+
+function LlmPanel({
+  llm, llmProvider, llmModel, llmModelOptions, llmKey, llmEnabled,
+  llmLoadError, llmLoading, llmSaving, llmMessage,
+  setLlmProvider, setLlmModel, setLlmModelOptions, setLlmKey, setLlmEnabled, saveLlm,
+}: LlmPanelProps) {
+  return <div className="panel">
+    <div className="panel-title">
+    <span>LLM enrichment</span>
+    <span className="muted">Optional, evidence-bound</span>
+    </div>
+    <form className="quality-policy-form" onSubmit={(event) => { event.preventDefault(); void saveLlm() }}>
+    <label className="form-checkbox">
+    <input
+      type="checkbox"
+      checked={llmEnabled}
+      onChange={(event) => setLlmEnabled(event.target.checked)}
+    />
+    Enable configured LLM
+    </label>
+    <div className="form-grid">
+    <div className="form-field">
+    <label htmlFor="llm-provider">Provider</label>
+    <input
+      id="llm-provider"
+      value={llmProvider}
+      onChange={(event) => {
+        const provider = event.target.value
+        const options = getLlmModelOptions(provider, null)
+        setLlmProvider(provider)
+        setLlmModelOptions(options)
+        setLlmModel(options[0] ?? '')
+      }}
+    />
+    </div>
+    <div className="form-field">
+    <label htmlFor="llm-model">Model</label>
+    <select
+      aria-describedby={llmLoadError ? 'llm-model-error' : undefined}
+      disabled={llmLoading || llmSaving || llmModelOptions.length === 0}
+      id="llm-model"
+      onChange={(event) => setLlmModel(event.target.value)}
+      value={llmModel}
+    >
+    <option value="">{llmLoading ? 'Loading models…' : 'Select a model'}</option>
+    {llmModelOptions.map((model) => <option key={model} value={model}>{model}</option>)}
+    </select>
+    {llmLoadError && <small className="form-message" id="llm-model-error" role="alert">{llmLoadError}</small>}
+    </div>
+    <div className="form-field form-field-wide">
+    <label htmlFor="llm-api-key">API key {llm?.api_key_configured ? '(configured; leave blank to keep)' : ''}</label>
+    <input
+      id="llm-api-key"
+      type="password"
+      value={llmKey}
+      onChange={(event) => setLlmKey(event.target.value)}
+      autoComplete="off"
+    />
+    </div>
+    </div>
+    <div className="form-actions">
+    <button
+      className="secondary-button"
+      disabled={llmLoading || llmSaving || llmModelOptions.length === 0 || !llmModel}
+      type="submit"
+    >
+      {llmSaving ? 'Saving...' : 'Save LLM configuration'}
+    </button>
+    {llmMessage && <small className="form-message" role="status">{llmMessage}</small>}
+    </div>
+    </form>
+    </div>
+}
+
+function QualityGateFailureSummary({ gate }: { gate: any }) {
+  if (gate.status === 'not_configured') {
+    return (
+      <EmptyState
+        title="Quality gate not configured"
+        description="Configure at least one quality-gate threshold to evaluate this analysis."
+        compact
+      />
+    )
+  }
+  if (gate.failures.length === 0) {
+    return (
+      <EmptyState
+        title="All configured rules passed"
+        description="No quality-gate failure was reported."
+        compact
+      />
+    )
+  }
+  return gate.failures.map((failure: any) => (
+    <div className="availability-row" key={failure.code}>
+      <strong>{failure.code}</strong>
+      <span>{failure.detail}</span>
+    </div>
+  ))
+}
+
+function QualityGateContent(props: any) {
+  const {
+    llmPanel,
+    projectId,
+    save,
+    maxCritical,
+    setMaxCritical,
+    maxRisk,
+    setMaxRisk,
+    maxHotspots,
+    setMaxHotspots,
+    importFile,
+    saveMessage,
+    importMessage,
+    profiles,
+    setShowRisk,
+    observed,
+    hotspotCount,
+    summary,
+    gate,
+    showRisk,
+    onNavigate,
+  } = props
+  return <section className="page-grid">{llmPanel}<div className="panel">
+    <div className="panel-title">
+    <span>Quality gate</span>
+    <span className={`status-badge status-${gate.status === 'failed' ? 'failed' : 'completed'}`}>
+      {gate.status === 'not_configured' ? 'not configured' : gate.passed ? 'passed' : 'failed'}
+    </span>
+    </div>
+    {projectId && <form className="quality-policy-form" onSubmit={(event) => { event.preventDefault(); void save() }}>
+    <div className="form-grid">
+    <div className="form-field">
+    <label htmlFor="max-critical">Maximum new critical findings</label>
+    <input
+      id="max-critical"
+      type="number"
+      min="0"
+      value={maxCritical}
+      onChange={(event) => setMaxCritical(event.target.value)}
+    />
+    </div>
+    <div className="form-field">
+    <label htmlFor="max-risk-score">Maximum risk score</label>
+    <input
+      id="max-risk-score"
+      type="number"
+      min="0"
+      max="1"
+      step="0.01"
+      value={maxRisk}
+      onChange={(event) => setMaxRisk(event.target.value)}
+    />
+    </div>
+    <div className="form-field">
+    <label htmlFor="max-hotspots">Maximum new hotspots</label>
+    <input
+      id="max-hotspots"
+      type="number"
+      min="0"
+      value={maxHotspots}
+      onChange={(event) => setMaxHotspots(event.target.value)}
+    />
+    </div>
+    <div className="form-field form-field-wide">
+    <label htmlFor="sonar-profile">Import SonarQube profile XML</label>
+    <input
+      id="sonar-profile"
+      type="file"
+      accept=".xml,application/xml,text/xml"
+      onChange={(event) => {
+        const file = event.target.files?.[0]
+        if (file) void importFile(file)
+      }}
+    />
+    </div>
+    </div>
+    <div className="form-actions">
+    <button className="secondary-button" type="submit">Save quality gate</button>
+    {saveMessage && <small className="form-message" role="status">{saveMessage}</small>}
+    {importMessage && <small className="form-message" role="status">{importMessage}</small>}
+    </div>
+    {profiles.length > 0 && <div className="availability-row">
+    <span>Loaded profiles</span>
+    <strong>{profiles.reduce((total: number, profile: any) => total + profile.rules.length, 0)} rules</strong>
+    <ul>
+      {profiles.flatMap((profile: any) => profile.rules.map((rule: any) => (
+        <li key={`${profile.language}-${rule.analyzer}-${rule.rule_id}`}>
+          {profile.language}: {rule.analyzer}:{rule.rule_id}
+        </li>
+      )))}
+    </ul>
+    </div>}</form>}<div className="metric-grid">
+    <article className="metric-card">
+    <button className="table-sort-button" type="button" onClick={() => setShowRisk((value: boolean) => !value)}>
+    <span>Risk score</span>
+    <strong>{observed.risk_score === null ? '—' : observed.risk_score.toFixed(2)}</strong>
+    </button>
+    <small>Click for breakdown</small>
+    </article>
+    <article className="metric-card">
+    <span>New critical findings</span>
+    <strong>{observed.new_critical_findings}</strong>
+    <small>
+    <button type="button" onClick={() => onNavigate('findings')}>Open findings</button>
+    </small>
+    </article>
+    <article className="metric-card">
+    <span>Hotspots</span>
+    <strong>{hotspotCount}</strong>
+    <small>
+    <button type="button" onClick={() => onNavigate('hotspots')}>Open hotspots</button>
+    </small>
+    </article>
+    </div>
+    {showRisk && summary.risk_assessment && <div className="panel">
+    <div className="panel-title">
+    <span>Risk score breakdown</span>
+    <span className="muted">v{summary.risk_assessment.version}</span>
+    </div>
+    {Object.entries(summary.risk_assessment.components).map(([name, value]) => (
+      <div className="availability-row" key={name}>
+        <span>{name}</span>
+        <strong>{Number(value).toFixed(2)} × {Number(summary.risk_assessment?.weights[name] ?? 0).toFixed(2)}</strong>
+      </div>
+    ))}
+    <p className="muted">Score is the weighted average of normalized repository evidence components.</p>
+    </div>}
+    <QualityGateFailureSummary gate={gate} />
+    </div>
+    </section>
 }
 
 function QualityGateView({
@@ -1553,7 +1907,18 @@ function QualityGateView({
   projectId: string | null
   onNavigate: (view: View) => void
 }) {
-  const gate = summary?.quality_gate ?? { passed: false, configured: false, status: 'not_configured' as const, failures: [], thresholds: { max_new_critical_findings: null, max_risk_score: null, max_new_hotspots: null }, observed: { new_critical_findings: 0, risk_score: null, new_hotspots: 0 } }
+  const gate = summary?.quality_gate ?? {
+    passed: false,
+    configured: false,
+    status: 'not_configured' as const,
+    failures: [],
+    thresholds: {
+      max_new_critical_findings: null,
+      max_risk_score: null,
+      max_new_hotspots: null,
+    },
+    observed: { new_critical_findings: 0, risk_score: null, new_hotspots: 0 },
+  }
   const observed = gate.observed
   const [showRisk, setShowRisk] = useState(false)
   const [maxRisk, setMaxRisk] = useState(gate.thresholds.max_risk_score?.toString() ?? '')
@@ -1599,7 +1964,23 @@ function QualityGateView({
       setProfiles(policy.profiles)
     }).catch(() => undefined)
   }, [projectId])
-  if (!summary?.quality_gate) return <section className="page-grid"><div className="panel"><div className="panel-title"><span>Quality gate</span><span className="muted">Evidence only</span></div><EmptyState title="Quality-gate data unavailable" description="The completed analysis did not include a quality-gate evaluation." compact /></div></section>
+  if (!summary?.quality_gate) {
+    return (
+      <section className="page-grid">
+        <div className="panel">
+          <div className="panel-title">
+            <span>Quality gate</span>
+            <span className="muted">Evidence only</span>
+          </div>
+          <EmptyState
+            title="Quality-gate data unavailable"
+            description="The completed analysis did not include a quality-gate evaluation."
+            compact
+          />
+        </div>
+      </section>
+    )
+  }
   const save = async () => {
     if (!projectId) return
     await saveQualityPolicy(projectId, {
@@ -1640,8 +2021,50 @@ function QualityGateView({
     finally { setLlmSaving(false) }
   }
   const hotspotCount = totalHotspots(summary.hotspot_count)
-  const llmPanel = <div className="panel"><div className="panel-title"><span>LLM enrichment</span><span className="muted">Optional, evidence-bound</span></div><form className="quality-policy-form" onSubmit={(event) => { event.preventDefault(); void saveLlm() }}><label className="form-checkbox"><input type="checkbox" checked={llmEnabled} onChange={(event) => setLlmEnabled(event.target.checked)} /> Enable configured LLM</label><div className="form-grid"><div className="form-field"><label htmlFor="llm-provider">Provider</label><input id="llm-provider" value={llmProvider} onChange={(event) => { const provider = event.target.value; const options = getLlmModelOptions(provider, null); setLlmProvider(provider); setLlmModelOptions(options); setLlmModel(options[0] ?? '') }} /></div><div className="form-field"><label htmlFor="llm-model">Model</label><select aria-describedby={llmLoadError ? 'llm-model-error' : undefined} disabled={llmLoading || llmSaving || llmModelOptions.length === 0} id="llm-model" onChange={(event) => setLlmModel(event.target.value)} value={llmModel}><option value="">{llmLoading ? 'Loading models…' : 'Select a model'}</option>{llmModelOptions.map((model) => <option key={model} value={model}>{model}</option>)}</select>{llmLoadError && <small className="form-message" id="llm-model-error" role="alert">{llmLoadError}</small>}</div><div className="form-field form-field-wide"><label htmlFor="llm-api-key">API key {llm?.api_key_configured ? '(configured; leave blank to keep)' : ''}</label><input id="llm-api-key" type="password" value={llmKey} onChange={(event) => setLlmKey(event.target.value)} autoComplete="off" /></div></div><div className="form-actions"><button className="secondary-button" disabled={llmLoading || llmSaving || llmModelOptions.length === 0 || !llmModel} type="submit">{llmSaving ? 'Saving...' : 'Save LLM configuration'}</button>{llmMessage && <small className="form-message" role="status">{llmMessage}</small>}</div></form></div>
-  return <section className="page-grid">{llmPanel}<div className="panel"><div className="panel-title"><span>Quality gate</span><span className={`status-badge status-${gate.status === 'failed' ? 'failed' : 'completed'}`}>{gate.status === 'not_configured' ? 'not configured' : gate.passed ? 'passed' : 'failed'}</span></div>{projectId && <form className="quality-policy-form" onSubmit={(event) => { event.preventDefault(); void save() }}><div className="form-grid"><div className="form-field"><label htmlFor="max-critical">Maximum new critical findings</label><input id="max-critical" type="number" min="0" value={maxCritical} onChange={(event) => setMaxCritical(event.target.value)} /></div><div className="form-field"><label htmlFor="max-risk-score">Maximum risk score</label><input id="max-risk-score" type="number" min="0" max="1" step="0.01" value={maxRisk} onChange={(event) => setMaxRisk(event.target.value)} /></div><div className="form-field"><label htmlFor="max-hotspots">Maximum new hotspots</label><input id="max-hotspots" type="number" min="0" value={maxHotspots} onChange={(event) => setMaxHotspots(event.target.value)} /></div><div className="form-field form-field-wide"><label htmlFor="sonar-profile">Import SonarQube profile XML</label><input id="sonar-profile" type="file" accept=".xml,application/xml,text/xml" onChange={(event) => { const file = event.target.files?.[0]; if (file) void importFile(file) }} /></div></div><div className="form-actions"><button className="secondary-button" type="submit">Save quality gate</button>{saveMessage && <small className="form-message" role="status">{saveMessage}</small>}{importMessage && <small className="form-message" role="status">{importMessage}</small>}</div>{profiles.length > 0 && <div className="availability-row"><span>Loaded profiles</span><strong>{profiles.reduce((total, profile) => total + profile.rules.length, 0)} rules</strong><ul>{profiles.flatMap((profile) => profile.rules.map((rule) => <li key={`${profile.language}-${rule.analyzer}-${rule.rule_id}`}>{profile.language}: {rule.analyzer}:{rule.rule_id}</li>))}</ul></div>}</form>}<div className="metric-grid"><article className="metric-card"><button className="table-sort-button" type="button" onClick={() => setShowRisk((value) => !value)}><span>Risk score</span><strong>{observed.risk_score === null ? '—' : observed.risk_score.toFixed(2)}</strong></button><small>Click for breakdown</small></article><article className="metric-card"><span>New critical findings</span><strong>{observed.new_critical_findings}</strong><small><button type="button" onClick={() => onNavigate('findings')}>Open findings</button></small></article><article className="metric-card"><span>Hotspots</span><strong>{hotspotCount}</strong><small><button type="button" onClick={() => onNavigate('hotspots')}>Open hotspots</button></small></article></div>{showRisk && summary.risk_assessment && <div className="panel"><div className="panel-title"><span>Risk score breakdown</span><span className="muted">v{summary.risk_assessment.version}</span></div>{Object.entries(summary.risk_assessment.components).map(([name, value]) => <div className="availability-row" key={name}><span>{name}</span><strong>{value.toFixed(2)} × {(summary.risk_assessment?.weights[name] ?? 0).toFixed(2)}</strong></div>)}<p className="muted">Score is the weighted average of normalized repository evidence components.</p></div>}{gate.status === 'not_configured' && <EmptyState title="Quality gate not configured" description="Configure at least one quality-gate threshold to evaluate this analysis." compact />}{gate.failures.length ? gate.failures.map((failure) => <div className="availability-row" key={failure.code}><strong>{failure.code}</strong><span>{failure.detail}</span></div>) : gate.status !== 'not_configured' && <EmptyState title="All configured rules passed" description="No quality-gate failure was reported." compact />}</div></section>
+  const llmPanel = (
+    <LlmPanel
+      llm={llm}
+      llmProvider={llmProvider}
+      llmModel={llmModel}
+      llmModelOptions={llmModelOptions}
+      llmKey={llmKey}
+      llmEnabled={llmEnabled}
+      llmLoadError={llmLoadError}
+      llmLoading={llmLoading}
+      llmSaving={llmSaving}
+      llmMessage={llmMessage}
+      setLlmProvider={setLlmProvider}
+      setLlmModel={setLlmModel}
+      setLlmModelOptions={setLlmModelOptions}
+      setLlmKey={setLlmKey}
+      setLlmEnabled={setLlmEnabled}
+      saveLlm={() => void saveLlm()}
+    />
+  )
+  return (
+    <QualityGateContent
+      llmPanel={llmPanel}
+      projectId={projectId}
+      save={save}
+      maxCritical={maxCritical}
+      setMaxCritical={setMaxCritical}
+      maxRisk={maxRisk}
+      setMaxRisk={setMaxRisk}
+      maxHotspots={maxHotspots}
+      setMaxHotspots={setMaxHotspots}
+      importFile={importFile}
+      saveMessage={saveMessage}
+      importMessage={importMessage}
+      profiles={profiles}
+      setShowRisk={setShowRisk}
+      observed={observed}
+      hotspotCount={hotspotCount}
+      summary={summary}
+      gate={gate}
+      showRisk={showRisk}
+      onNavigate={onNavigate}
+    />
+  )
 }
 
 function EmptyState({

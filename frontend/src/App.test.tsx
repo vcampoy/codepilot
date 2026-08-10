@@ -830,6 +830,11 @@ describe('completed analysis result loading', () => {
     fireEvent.change(screen.getByLabelText('Maximum risk score'), { target: { value: '0.5' } })
     fireEvent.click(screen.getByRole('button', { name: 'Save quality gate' }))
     await waitFor(() => expect(fixtures.saveQualityPolicy).toHaveBeenCalled())
+    fireEvent.change(screen.getByLabelText('Import SonarQube profile XML'), {
+      target: { files: [new File(['<profile />'], 'profile.xml', { type: 'application/xml' })] },
+    })
+    await waitFor(() => expect(screen.getByText('Imported 1 rules; 0 unsupported.')).toBeInTheDocument())
+    expect(fixtures.importQualityProfile).toHaveBeenCalledWith('project-1', '<profile />')
     fireEvent.click(screen.getByRole('button', { name: 'Open findings' }))
     expect(window.location.hash).toBe('#findings')
   })
