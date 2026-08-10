@@ -598,12 +598,22 @@ function FindingsView({
               <tbody>
                 {orderedFindings.map((finding) => {
                   const severity = displaySeverity(finding.severity)
+                  const findingLocation = [
+                    `${finding.path}:${finding.start_line}`,
+                    finding.end_line !== finding.start_line ? `-${finding.end_line}` : '',
+                  ].join('')
                   return (
                     <tr key={`${finding.analyzer}-${finding.path}-${finding.start_line}-${finding.rule_id}`}>
                       {visibleColumns.includes('description') && <td data-label="Description">
                         <strong>{finding.message}</strong>
                         <small className="finding-meta">
-                          <button className="path-link" onClick={() => onSelectPath(finding.path)} type="button"><code>{finding.path}:{finding.start_line}{finding.end_line !== finding.start_line ? `-${finding.end_line}` : ''}</code></button>
+                          <button
+                            className="path-link"
+                            onClick={() => onSelectPath(finding.path)}
+                            type="button"
+                          >
+                            <code>{findingLocation}</code>
+                          </button>
                           <span>{finding.rule_id} · {finding.analyzer}</span>
                         </small>
                       </td>}
@@ -1012,7 +1022,9 @@ function HotspotsView({
   }
   if (status !== 'completed') return <EmptyState title="Hotspots pending" description="Hotspots appear after deterministic analysis completes." />
   if (error && hotspots.length === 0) return <EmptyState title="Hotspots unavailable" description={error} />
-  if (hotspots.length === 0) return <EmptyState title="No hotspots" description="No file reached the configured hotspot threshold." />
+  if (hotspots.length === 0) {
+    return <EmptyState title="No hotspots" description="No file reached the configured hotspot threshold." />
+  }
   const hotspotCountLabel = filteredHotspots.length === hotspots.length
     ? hotspots.length
     : `${filteredHotspots.length} of ${hotspots.length}`

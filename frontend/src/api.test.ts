@@ -142,7 +142,9 @@ describe('analysis API client', () => {
         ),
     )
     vi.stubGlobal('fetch', fetchMock)
-    await expect(saveLlmConfiguration({ enabled: true, provider: 'openai', model: 'gpt-test', api_key: 'sk-test' })).resolves.toMatchObject({ api_key_configured: true })
+    await expect(
+      saveLlmConfiguration({ enabled: true, provider: 'openai', model: 'gpt-test', api_key: 'sk-test' }),
+    ).resolves.toMatchObject({ api_key_configured: true })
     await expect(getLlmConfiguration()).resolves.toMatchObject({ provider: 'openai' })
     expect(fetchMock.mock.calls[0][0]).toBe('http://localhost:8000/api/v1/settings/llm')
     expect(fetchMock.mock.calls[0][1]).toMatchObject({ method: 'PUT' })

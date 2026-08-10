@@ -304,7 +304,10 @@ describe('analysis history and quality KPI', () => {
     const pending = deferred<{ enabled: boolean; provider: string; model: string; api_key_configured: boolean }>()
     fixtures.getLlmConfiguration.mockReturnValue(pending.promise)
     render(<App />)
-    fireEvent.submit(screen.getByRole('button', { name: 'Analyze repository' }).closest('form')!, { preventDefault: () => undefined })
+    fireEvent.submit(
+      screen.getByRole('button', { name: 'Analyze repository' }).closest('form')!,
+      { preventDefault: () => undefined },
+    )
     fireEvent.click(await screen.findByRole('button', { name: 'Quality gate' }))
     const model = screen.getByLabelText('Model')
     expect(model).toBeDisabled()

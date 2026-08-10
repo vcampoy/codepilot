@@ -321,7 +321,8 @@ def _parse_public_repository_hostname(url: str) -> str:
         raise UnsupportedRepositoryUrlError() from error
     if not _is_supported_repository_url(parsed, hostname, port):
         raise UnsupportedRepositoryUrlError()
-    assert hostname is not None
+    if hostname is None:
+        raise UnsupportedRepositoryUrlError()
     return hostname.rstrip(".").casefold()
 
 

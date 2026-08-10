@@ -260,6 +260,15 @@ def test_rejects_private_dns_resolution(tmp_path: Path) -> None:
     asyncio.run(scenario())
 
 
+def test_rejects_missing_hostname_without_relying_on_assert(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(ingestion, "_is_supported_repository_url", lambda *_args: True)
+
+    with pytest.raises(UnsupportedRepositoryUrlError):
+        ingestion._parse_public_repository_hostname("https:///repository.git")
+
+
 @pytest.mark.parametrize("address", ["100.64.0.1", "198.18.0.1", "192.0.2.1"])
 def test_rejects_shared_and_non_public_dns_resolution(tmp_path: Path, address: str) -> None:
     source_path = tmp_path / "source"
