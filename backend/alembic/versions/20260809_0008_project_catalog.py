@@ -47,7 +47,23 @@ def upgrade() -> None:
         key = url.strip().lower().rstrip("/").removesuffix(".git")
         name = url.rstrip("/").rsplit("/", 1)[-1].removesuffix(".git") or url
         project_id = uuid4()
-        bind.execute(sa.text("INSERT INTO codepilot_projects (project_id, workspace_id, repository_url, repository_key, name, created_at, updated_at) VALUES (:id, :workspace, :url, :key, :name, :created, :updated)"), {"id": project_id, "workspace": row["workspace_id"], "url": url, "key": key, "name": name, "created": row["created_at"], "updated": row["updated_at"]})
+        insert_project_query = (
+            "INSERT INTO codepilot_projects (project_id, workspace_id, repository_url, "
+            "repository_key, name, created_at, updated_at) VALUES "
+            "(:id, :workspace, :url, :key, :name, :created, :updated)"
+        )
+        bind.execute(
+            sa.text(insert_project_query),
+            {
+                "id": project_id,
+                "workspace": row["workspace_id"],
+                "url": url,
+                "key": key,
+                "name": name,
+                "created": row["created_at"],
+                "updated": row["updated_at"],
+            },
+        )
         analysis_update_query = (
             "UPDATE codepilot_analyses SET project_id = :id "
             "WHERE workspace_id = :workspace AND "
