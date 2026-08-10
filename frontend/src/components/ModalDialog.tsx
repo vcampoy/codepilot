@@ -77,7 +77,12 @@ export function ModalDialog({
   )
 
   return (
-    <div className="filter-dialog-overlay" onMouseDown={(event) => { if (event.target === event.currentTarget) onCancel() }}>
+    <div
+      className="filter-dialog-overlay"
+      onMouseDown={(event) => {
+        if (event.target === event.currentTarget) onCancel()
+      }}
+    >
       {onSubmit ? (
         <form
           aria-labelledby={titleId}

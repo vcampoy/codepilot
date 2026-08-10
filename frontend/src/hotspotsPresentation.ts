@@ -14,7 +14,13 @@ export const HOTSPOT_COLUMNS: readonly { key: HotspotColumnKey; label: string }[
   { key: 'components', label: 'Components' },
 ] as const
 
-const RISK_ORDER: Record<HotspotRisk, number> = { low: 0, medium: 1, high: 2, critical: 3, unavailable: Number.POSITIVE_INFINITY }
+const RISK_ORDER: Record<HotspotRisk, number> = {
+  low: 0,
+  medium: 1,
+  high: 2,
+  critical: 3,
+  unavailable: Number.POSITIVE_INFINITY,
+}
 
 export function hotspotRisk(hotspot: FileInsight): HotspotRisk {
   const normalized = hotspot.risk?.category?.trim().toLowerCase()

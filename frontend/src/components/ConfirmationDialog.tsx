@@ -11,7 +11,15 @@ type ConfirmationDialogProps = {
   onConfirm: () => void
 }
 
-export function ConfirmationDialog({ children, confirmLabel, open, title, busy = false, onCancel, onConfirm }: ConfirmationDialogProps) {
+export function ConfirmationDialog({
+  children,
+  confirmLabel,
+  open,
+  title,
+  busy = false,
+  onCancel,
+  onConfirm,
+}: ConfirmationDialogProps) {
   return (
     <ModalDialog
       className="confirmation-dialog"
