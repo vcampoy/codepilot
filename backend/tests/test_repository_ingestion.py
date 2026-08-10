@@ -563,6 +563,58 @@ def test_metadata_output_is_bounded(tmp_path: Path) -> None:
     asyncio.run(scenario())
 
 
+def test_measure_storage_skips_file_removed_between_enumeration_and_stat(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    present = tmp_path / "present.txt"
+    transient = tmp_path / "HEAD.lock"
+    present.write_bytes(b"present")
+    transient.write_bytes(b"transient")
+
+    def enumerated_files(_root: Path, *, include_git: bool) -> Iterator[Path]:
+        del include_git
+        yield transient
+        yield present
+
+    monkeypatch.setattr(ingestion, "_iter_files", enumerated_files)
+    original_stat = Path.stat
+
+    def stat_with_race(path: Path, *, follow_symlinks: bool = True) -> os.stat_result:
+        if path == transient:
+            transient.unlink()
+        return original_stat(path, follow_symlinks=follow_symlinks)
+
+    monkeypatch.setattr(Path, "stat", stat_with_race)
+
+    assert ingestion._measure_storage(tmp_path) == (len(b"present"), 1)
+
+
+def test_measure_storage_wraps_permission_error_from_stat(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    denied = tmp_path / "denied.txt"
+    denied.write_bytes(b"denied")
+
+    def enumerated_files(_root: Path, *, include_git: bool) -> Iterator[Path]:
+        del include_git
+        yield denied
+
+    monkeypatch.setattr(ingestion, "_iter_files", enumerated_files)
+    original_stat = Path.stat
+
+    def stat_with_permission_error(
+        path: Path, *, follow_symlinks: bool = True
+    ) -> os.stat_result:
+        if path == denied:
+            raise PermissionError("denied")
+        return original_stat(path, follow_symlinks=follow_symlinks)
+
+    monkeypatch.setattr(Path, "stat", stat_with_permission_error)
+
+    with pytest.raises(RepositoryInspectionError):
+        ingestion._measure_storage(tmp_path)
+
+
 @pytest.mark.parametrize("failure", [RecursionError(), PermissionError("denied")])
 def test_traversal_failures_are_explicit_domain_errors(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, failure: Exception

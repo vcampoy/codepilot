@@ -427,6 +427,8 @@ def _measure_storage(
     try:
         for path in _iter_files(root, include_git=True):
             size = _file_size(path)
+            if size is None:
+                continue
             total_bytes += size
             if _counts_storage_file(path, root):
                 file_count += 1
@@ -436,9 +438,11 @@ def _measure_storage(
     return total_bytes, file_count
 
 
-def _file_size(path: Path) -> int:
+def _file_size(path: Path) -> int | None:
     try:
         return path.stat().st_size
+    except FileNotFoundError:
+        return None
     except OSError as error:
         raise RepositoryInspectionError() from error
 
