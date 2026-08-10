@@ -1346,7 +1346,14 @@ function QualityGateView({
   }
   const importFile = async (file: File) => {
     if (!projectId) return
-    try { const report = await importQualityProfile(projectId, await file.text()); setImportMessage(`Imported ${report.mapped} rules; ${report.unsupported.length} unsupported.`); const policy = await getQualityPolicy(projectId); setProfiles(policy.profiles) } catch (error) { setImportMessage(error instanceof Error ? error.message : 'Import failed.') }
+    try {
+      const report = await importQualityProfile(projectId, await file.text())
+      setImportMessage(`Imported ${report.mapped} rules; ${report.unsupported.length} unsupported.`)
+      const policy = await getQualityPolicy(projectId)
+      setProfiles(policy.profiles)
+    } catch (error) {
+      setImportMessage(error instanceof Error ? error.message : 'Import failed.')
+    }
   }
   const saveLlm = async () => {
     if (!llmModel) return

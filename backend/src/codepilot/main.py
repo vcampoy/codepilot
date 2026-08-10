@@ -103,7 +103,8 @@ def create_app(
             ),
         )
     else:
-        assert analysis_service is not None
+        if analysis_service is None:
+            raise ValueError("analysis_service is required when repository ownership is disabled")
         analysis_repository = getattr(analysis_service, "_repository", None)
         resolved_analysis_service = analysis_service
     application.state.analysis_repository = analysis_repository

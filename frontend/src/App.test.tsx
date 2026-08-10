@@ -232,7 +232,10 @@ describe('analysis history and quality KPI', () => {
       },
     })
     render(<App />)
-    fireEvent.submit(screen.getByRole('button', { name: 'Analyze repository' }).closest('form')!, { preventDefault: () => undefined })
+    fireEvent.submit(
+      screen.getByRole('button', { name: 'Analyze repository' }).closest('form')!,
+      { preventDefault: () => undefined },
+    )
     fireEvent.click(await screen.findByRole('button', { name: 'Quality gate' }))
     expect(screen.getAllByText('Hotspots').length).toBeGreaterThanOrEqual(1)
     expect(screen.getByText('11')).toBeInTheDocument()
@@ -473,7 +476,13 @@ describe('completed analysis result loading', () => {
 
   it('filters, sorts, and exports hotspots using the visible rows', async () => {
     configureCompletedRun()
-    const secondInsight = { ...insight, path: 'src/other.py', hotspot_score: 0.4, risk: { ...insight.risk!, score: 0.4, category: 'medium' }, metrics: { complexity: 0.4, coupling: 0.3 } }
+    const secondInsight = {
+      ...insight,
+      path: 'src/other.py',
+      hotspot_score: 0.4,
+      risk: { ...insight.risk!, score: 0.4, category: 'medium' },
+      metrics: { complexity: 0.4, coupling: 0.3 },
+    }
     fixtures.getAnalysisFindings.mockResolvedValue([finding])
     fixtures.getAnalysisHotspots.mockResolvedValue([insight, secondInsight])
     fixtures.getAnalysisFiles.mockResolvedValue({ items: [insight, secondInsight], total: 2, limit: 100, offset: 0 })
@@ -727,7 +736,10 @@ describe('completed analysis result loading', () => {
     })
     render(<App />)
     fireEvent.change(screen.getByLabelText('Repository URL'), { target: { value: 'https://github.com/acme/demo' } })
-    fireEvent.submit(screen.getByRole('button', { name: 'Analyze repository' }).closest('form')!, { preventDefault: () => undefined })
+    fireEvent.submit(
+      screen.getByRole('button', { name: 'Analyze repository' }).closest('form')!,
+      { preventDefault: () => undefined },
+    )
     fireEvent.click(await screen.findByRole('button', { name: 'Quality gate' }))
     await waitFor(() => expect(screen.getByLabelText('Maximum risk score')).toBeInTheDocument())
     fireEvent.change(screen.getByLabelText('Maximum risk score'), { target: { value: '0.5' } })

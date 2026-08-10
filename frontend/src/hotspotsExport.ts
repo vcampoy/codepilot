@@ -52,9 +52,18 @@ export function createHotspotsMarkdownExport(input: HotspotsMarkdownExportInput)
   return { filename: `${repositoryName}-hotspots-${timestamp}.md`, content }
 }
 
-function formatHotspot(hotspot: FileInsight, detail: FileDetail | null | undefined, index: number): string {
+function formatHotspot(
+  hotspot: FileInsight,
+  detail: FileDetail | null | undefined,
+  index: number,
+): string {
   const risk = hotspot.risk ? `${hotspot.risk.score.toFixed(2)} (${hotspotRisk(hotspot)})` : 'Unavailable'
   const findings = detail?.findings ?? []
+  const relatedFindings = detail
+    ? findings.length > 0
+      ? findings.map((finding) => formatFinding(finding)).join('\n')
+      : 'Related findings: _No related findings._'
+    : 'Related findings: _Unavailable; file detail could not be loaded._'
   return [
     `## ${index}. ${escapeInline(hotspot.path)}`,
     '',
@@ -65,7 +74,7 @@ function formatHotspot(hotspot: FileInsight, detail: FileDetail | null | undefin
     '',
     '### Related findings',
     '',
-    detail ? (findings.length > 0 ? findings.map((finding) => formatFinding(finding)).join('\n') : 'Related findings: _No related findings._') : 'Related findings: _Unavailable; file detail could not be loaded._',
+    relatedFindings,
   ].join('\n')
 }
 

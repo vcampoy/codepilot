@@ -6,9 +6,22 @@ export interface AnalysisAccepted {
   project_id?: string | null
 }
 
-export interface Project { project_id: string; name: string; repository_url: string; created_at: string; updated_at: string }
+export interface Project {
+  project_id: string
+  name: string
+  repository_url: string
+  created_at: string
+  updated_at: string
+}
 export interface ProjectListResponse { items: Project[]; total: number; limit: number; offset: number }
-export interface AnalysisRun { analysis_id: string; project_id: string | null; status: AnalysisStatus; repository_url: string; created_at: string; failure_message: string | null }
+export interface AnalysisRun {
+  analysis_id: string
+  project_id: string | null
+  status: AnalysisStatus
+  repository_url: string
+  created_at: string
+  failure_message: string | null
+}
 export interface AnalysisRunListResponse { items: AnalysisRun[]; total: number; limit: number; offset: number }
 export interface AnalysisHistoryItem {
   analysis_id: string
@@ -49,7 +62,13 @@ export interface AnalysisSummaryResponse {
   } | null
 }
 
-export interface RiskAssessment { score: number; category: string; version: string; components: Record<string, number>; weights: Record<string, number> }
+export interface RiskAssessment {
+  score: number
+  category: string
+  version: string
+  components: Record<string, number>
+  weights: Record<string, number>
+}
 export interface QualityGateFailure { code: string; detail: string }
 export interface QualityGateThresholds {
   max_new_critical_findings: number | null
