@@ -95,6 +95,71 @@ function AppliedFilterTags({ values }: { values: readonly string[] }) {
   )
 }
 
+function canOpenWithoutAnalysis(view: View): boolean {
+  return view === 'repositories' || view === 'analyses'
+}
+
+function activeViewFor(view: View, hasAnalysis: boolean): View {
+  return hasAnalysis || canOpenWithoutAnalysis(view) ? view : 'repositories'
+}
+
+function RepositoriesView({
+  projects,
+  busy,
+  error,
+}: {
+  projects: readonly Project[]
+  busy: boolean
+  error: string | null
+}) {
+  return (
+    <section className="page-grid">
+      <div className="panel table-panel">
+        <div className="panel-title">
+          <span>Persisted repositories</span>
+          {!busy && <span className="muted">Latest updated first</span>}
+        </div>
+        {error && <p className="error-copy" role="alert">{error}</p>}
+        {busy ? (
+          <EmptyState title="Loading repositories" description="Reading persisted repositories." compact />
+        ) : projects.length ? (
+          <div className="history-table-wrap">
+            <table className="history-table">
+              <caption className="sr-only">Persisted repositories</caption>
+              <thead>
+                <tr>
+                  <th scope="col">Repository</th>
+                  <th scope="col">URL</th>
+                  <th scope="col">Last updated</th>
+                </tr>
+              </thead>
+              <tbody>
+                {projects.map((project) => (
+                  <tr key={project.project_id}>
+                    <th scope="row">{project.name}</th>
+                    <td>
+                      <a className="repository-link" href={project.repository_url} rel="noreferrer" target="_blank">
+                        {project.repository_url}
+                      </a>
+                    </td>
+                    <td>{formatHistoryDate(project.updated_at)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        ) : (
+          <EmptyState
+            title="No repositories yet"
+            description="Your submitted repositories will appear here with their latest analysis."
+            compact
+          />
+        )}
+      </div>
+    </section>
+  )
+}
+
 function App() {
   const [view, setView] = useState<View>(viewFromHash)
   const [repositoryUrl, setRepositoryUrl] = useState('')
@@ -111,6 +176,8 @@ function App() {
   const [resultsBusy, setResultsBusy] = useState(false)
   const [selectedFilePath, setSelectedFilePath] = useState<string | null>(null)
   const [projects, setProjects] = useState<Project[]>([])
+  const [projectsBusy, setProjectsBusy] = useState(false)
+  const [projectsError, setProjectsError] = useState<string | null>(null)
   const [historyItems, setHistoryItems] = useState<AnalysisHistoryItem[]>([])
   const [historyBusy, setHistoryBusy] = useState(false)
   const [historyError, setHistoryError] = useState<string | null>(null)
@@ -124,9 +191,8 @@ function App() {
     setHistoryBusy(true)
     setHistoryError(null)
     try {
-      const [history, projectCatalog] = await Promise.all([getAnalysisHistory(), getProjects()])
+      const history = await getAnalysisHistory()
       setHistoryItems(history.items)
-      setProjects(projectCatalog.items)
     } catch (historyLoadError) {
       setHistoryError(historyLoadError instanceof Error ? historyLoadError.message : 'Analysis history unavailable.')
     } finally {
@@ -134,8 +200,25 @@ function App() {
     }
   }
 
+  const refreshProjects = async () => {
+    setProjectsBusy(true)
+    setProjectsError(null)
+    try {
+      const projectCatalog = await getProjects()
+      setProjects(projectCatalog.items)
+    } catch (projectsLoadError) {
+      setProjectsError(projectsLoadError instanceof Error ? projectsLoadError.message : 'Repositories unavailable.')
+    } finally {
+      setProjectsBusy(false)
+    }
+  }
+
+  const refreshCatalogs = async () => {
+    await Promise.all([refreshHistory(), refreshProjects()])
+  }
+
   useEffect(() => {
-    void refreshHistory()
+    void refreshCatalogs()
   }, [])
 
   useEffect(() => {
@@ -250,7 +333,7 @@ function App() {
     try {
       const submittedRepositoryUrl = repositoryUrl.trim()
       const accepted = await createAnalysis(submittedRepositoryUrl)
-      void refreshHistory()
+      void refreshCatalogs()
       setAnalyzedRepositoryUrl(submittedRepositoryUrl)
       setAnalysisId(accepted.analysis_id)
       setStatus(accepted.status)
@@ -271,7 +354,7 @@ function App() {
   }
 
   const hasAnalysis = Boolean(analysisId)
-  const activeView = useMemo(() => (hasAnalysis ? view : 'repositories'), [hasAnalysis, view])
+  const activeView = useMemo(() => activeViewFor(view, hasAnalysis), [hasAnalysis, view])
 
   return (
     <div className="app-shell">
@@ -285,7 +368,7 @@ function App() {
           {views.map((item) => (
             <button
               className={`nav-item ${activeView === item.id ? 'is-active' : ''}`}
-              disabled={!hasAnalysis && item.id !== 'repositories'}
+              disabled={!hasAnalysis && !canOpenWithoutAnalysis(item.id)}
               key={item.id}
               onClick={() => navigate(item.id)}
               type="button"
@@ -301,49 +384,43 @@ function App() {
         </div>
       </aside>
 
-      <main className="main-content">
-        <header className="topbar">
-          <div>
-            <p className="kicker">Evidence-first code intelligence</p>
-            <h1>{views.find((item) => item.id === activeView)?.label || 'Repositories'}</h1>
-          </div>
-          {analysisId && <span className={`status-badge status-${status}`}>{status || 'queued'}</span>}
-        </header>
-
-        {error && <div className="alert" role="alert">{error}</div>}
-
-        {activeView === 'repositories' && (
-          <section className="page-grid">
-            <div className="hero-card">
-              <div>
-                <p className="kicker">Start with a public repository</p>
-                <h2>Make the next change with better evidence.</h2>
-                <p>
-                  {'Submit a Git HTTPS URL. CodePilot will clone it safely, queue an analysis, '
-                    + 'and keep you close to the source.'}
-                </p>
-              </div>
-              <form onSubmit={submitRepository} className="repo-form">
-                <label htmlFor="repository-url">Repository URL</label>
-                <div className="input-row">
-                  <input
-                    id="repository-url"
-                    onChange={(event) => setRepositoryUrl(event.target.value)}
-                    placeholder="https://github.com/org/project"
-                    required
-                    type="url"
-                    value={repositoryUrl}
-                  />
-                  <button disabled={busy} type="submit">{busy ? 'Queueing...' : 'Analyze repository'}</button>
-                </div>
-                <small>Public HTTPS Git repositories only. No credentials or repository code are executed.</small>
-              </form>
-            </div>
-            <EmptyState title="No repositories yet" description="Your submitted repositories will appear here with their latest analysis." />
-          </section>
-        )}
-
-        {activeView === 'analyses' && <HistoryView items={historyItems} busy={historyBusy} error={historyError} onSelectRun={(run) => {
+      <WorkspaceView
+        activeView={activeView}
+        analysisId={analysisId}
+        analyzedRepositoryUrl={analyzedRepositoryUrl}
+        busy={busy}
+        error={error}
+        fileDetail={fileDetail}
+        fileDetailBusy={fileDetailBusy}
+        fileDetailError={fileDetailError}
+        fileInsights={fileInsights}
+        filesError={filesError}
+        findings={findings}
+        findingsError={findingsError}
+        historyBusy={historyBusy}
+        historyError={historyError}
+        historyItems={historyItems}
+        hotspots={hotspots}
+        hotspotsError={hotspotsError}
+        navigate={navigate}
+        onDelete={async (analysisIds) => {
+          const result = await deleteAnalyses(analysisIds, deleteAnalysis)
+          if (analysisId && result.deleted.includes(analysisId)) {
+            setAnalysisId(null)
+            setAnalyzedRepositoryUrl(null)
+            setStatus(null)
+            setSummary(null)
+            setFindings([])
+            setHotspots([])
+            setFileInsights([])
+            setSelectedFilePath(null)
+            navigate('analyses')
+          }
+          await refreshCatalogs()
+          return result
+        }}
+        onRepositoryUrlChange={setRepositoryUrl}
+        onSelectRun={(run) => {
           setAnalysisId(run.analysis_id)
           setAnalyzedRepositoryUrl(run.repository_url)
           setStatus('completed')
@@ -355,55 +432,233 @@ function App() {
           setSelectedFilePath(null)
           void getAnalysisSummary(run.analysis_id).then((result) => setSummary(result.summary)).catch(() => undefined)
           navigate('overview')
-        }} onDelete={async (analysisIds) => {
-          const result = await deleteAnalyses(analysisIds, deleteAnalysis)
-          if (analysisId && result.deleted.includes(analysisId)) {
-              setAnalysisId(null)
-              setAnalyzedRepositoryUrl(null)
-              setStatus(null)
-              setSummary(null)
-              setFindings([])
-              setHotspots([])
-              setFileInsights([])
-              setSelectedFilePath(null)
-              navigate('analyses')
-          }
-          await refreshHistory()
-          return result
-        }} />}
-        {activeView === 'overview' && <OverviewView analysisId={analysisId} status={status} summary={summary} />}
-        {activeView === 'findings' && (
-          <FindingsView
-            findings={findings}
-            status={status}
-            summary={summary}
-            error={error || findingsError}
-            repositoryUrl={analyzedRepositoryUrl}
-            analysisId={analysisId}
-            onSelectPath={(path) => {
-              setSelectedFilePath(path)
-              navigate('files')
-            }}
-          />
-        )}
-        {activeView === 'hotspots' && (
-          <HotspotsView
-            hotspots={hotspots}
-            status={status}
-            error={hotspotsError}
-            repositoryUrl={analyzedRepositoryUrl}
-            analysisId={analysisId}
-            onSelectPath={(path) => {
-              setSelectedFilePath(path)
-              navigate('files')
-            }}
-          />
-        )}
-        {activeView === 'files' && <FileDetailView detail={fileDetail} path={selectedFilePath} files={fileInsights} status={status} busy={fileDetailBusy || resultsBusy} error={fileDetailError} catalogError={filesError} onSelectPath={setSelectedFilePath} />}
-        {activeView === 'quality' && <QualityGateView summary={summary} projectId={projects.find((project) => project.repository_url === analyzedRepositoryUrl)?.project_id ?? null} onNavigate={navigate} />}
-      </main>
+        }}
+        onSelectPath={(path) => {
+          setSelectedFilePath(path)
+          navigate('files')
+        }}
+        onSubmitRepository={submitRepository}
+        projects={projects}
+        projectsBusy={projectsBusy}
+        projectsError={projectsError}
+        repositoryUrl={repositoryUrl}
+        resultsBusy={resultsBusy}
+        selectedFilePath={selectedFilePath}
+        status={status}
+        summary={summary}
+      />
     </div>
   )
+}
+
+type WorkspaceViewProps = {
+  activeView: View
+  analysisId: string | null
+  analyzedRepositoryUrl: string | null
+  busy: boolean
+  error: string | null
+  fileDetail: FileDetail | null
+  fileDetailBusy: boolean
+  fileDetailError: string | null
+  fileInsights: FileInsight[]
+  filesError: string | null
+  findings: AnalysisFinding[]
+  findingsError: string | null
+  historyBusy: boolean
+  historyError: string | null
+  historyItems: AnalysisHistoryItem[]
+  hotspots: FileInsight[]
+  hotspotsError: string | null
+  navigate: (view: View) => void
+  onDelete: (analysisIds: readonly string[]) => Promise<AnalysisDeletionResult>
+  onRepositoryUrlChange: (value: string) => void
+  onSelectPath: (path: string) => void
+  onSelectRun: (run: AnalysisHistoryItem) => void
+  onSubmitRepository: (event: FormEvent<HTMLFormElement>) => void | Promise<void>
+  projects: readonly Project[]
+  projectsBusy: boolean
+  projectsError: string | null
+  repositoryUrl: string
+  resultsBusy: boolean
+  selectedFilePath: string | null
+  status: AnalysisStatus | null
+  summary: AnalysisSummaryResponse['summary']
+}
+
+function WorkspaceView({
+  activeView,
+  analysisId,
+  analyzedRepositoryUrl,
+  busy,
+  error,
+  fileDetail,
+  fileDetailBusy,
+  fileDetailError,
+  fileInsights,
+  filesError,
+  findings,
+  findingsError,
+  historyBusy,
+  historyError,
+  historyItems,
+  hotspots,
+  hotspotsError,
+  navigate,
+  onDelete,
+  onRepositoryUrlChange,
+  onSelectPath,
+  onSelectRun,
+  onSubmitRepository,
+  projects,
+  projectsBusy,
+  projectsError,
+  repositoryUrl,
+  resultsBusy,
+  selectedFilePath,
+  status,
+  summary,
+}: WorkspaceViewProps) {
+  return (
+    <main className="main-content">
+      <header className="topbar">
+        <div>
+          <p className="kicker">Evidence-first code intelligence</p>
+          <h1>{views.find((item) => item.id === activeView)?.label || 'Repositories'}</h1>
+        </div>
+        {analysisId && <span className={`status-badge status-${status}`}>{status || 'queued'}</span>}
+      </header>
+
+      {error && <div className="alert" role="alert">{error}</div>}
+
+      <WorkspaceContent {...{
+        activeView,
+        analysisId,
+        analyzedRepositoryUrl,
+        busy,
+        error,
+        fileDetail,
+        fileDetailBusy,
+        fileDetailError,
+        fileInsights,
+        filesError,
+        findings,
+        findingsError,
+        historyBusy,
+        historyError,
+        historyItems,
+        hotspots,
+        hotspotsError,
+        navigate,
+        onDelete,
+        onRepositoryUrlChange,
+        onSelectPath,
+        onSelectRun,
+        onSubmitRepository,
+        projects,
+        projectsBusy,
+        projectsError,
+        repositoryUrl,
+        resultsBusy,
+        selectedFilePath,
+        status,
+        summary,
+      }} />
+    </main>
+  )
+}
+
+function WorkspaceContent(props: WorkspaceViewProps) {
+  switch (props.activeView) {
+    case 'repositories':
+      return (
+        <>
+          <section className="page-grid">
+            <div className="hero-card">
+              <div>
+                <p className="kicker">Start with a public repository</p>
+                <h2>Make the next change with better evidence.</h2>
+                <p>
+                  {'Submit a Git HTTPS URL. CodePilot will clone it safely, queue an analysis, '
+                    + 'and keep you close to the source.'}
+                </p>
+              </div>
+              <form onSubmit={props.onSubmitRepository} className="repo-form">
+                <label htmlFor="repository-url">Repository URL</label>
+                <div className="input-row">
+                  <input
+                    id="repository-url"
+                    onChange={(event) => props.onRepositoryUrlChange(event.target.value)}
+                    placeholder="https://github.com/org/project"
+                    required
+                    type="url"
+                    value={props.repositoryUrl}
+                  />
+                  <button disabled={props.busy} type="submit">{props.busy ? 'Queueing...' : 'Analyze repository'}</button>
+                </div>
+                <small>Public HTTPS Git repositories only. No credentials or repository code are executed.</small>
+              </form>
+            </div>
+          </section>
+          <RepositoriesView projects={props.projects} busy={props.projectsBusy} error={props.projectsError} />
+        </>
+      )
+    case 'analyses':
+      return (
+        <HistoryView
+          items={props.historyItems}
+          busy={props.historyBusy}
+          error={props.historyError}
+          onSelectRun={props.onSelectRun}
+          onDelete={props.onDelete}
+        />
+      )
+    case 'overview':
+      return <OverviewView analysisId={props.analysisId} status={props.status} summary={props.summary} />
+    case 'findings':
+      return (
+        <FindingsView
+          findings={props.findings}
+          status={props.status}
+          summary={props.summary}
+          error={props.error || props.findingsError}
+          repositoryUrl={props.analyzedRepositoryUrl}
+          analysisId={props.analysisId}
+          onSelectPath={props.onSelectPath}
+        />
+      )
+    case 'hotspots':
+      return (
+        <HotspotsView
+          hotspots={props.hotspots}
+          status={props.status}
+          error={props.hotspotsError}
+          repositoryUrl={props.analyzedRepositoryUrl}
+          analysisId={props.analysisId}
+          onSelectPath={props.onSelectPath}
+        />
+      )
+    case 'files':
+      return (
+        <FileDetailView
+          detail={props.fileDetail}
+          path={props.selectedFilePath}
+          files={props.fileInsights}
+          status={props.status}
+          busy={props.fileDetailBusy || props.resultsBusy}
+          error={props.fileDetailError}
+          catalogError={props.filesError}
+          onSelectPath={props.onSelectPath}
+        />
+      )
+    case 'quality':
+      return (
+        <QualityGateView
+          summary={props.summary}
+          projectId={props.projects.find((project) => project.repository_url === props.analyzedRepositoryUrl)?.project_id ?? null}
+          onNavigate={props.navigate}
+        />
+      )
+  }
 }
 
 function FindingsView({

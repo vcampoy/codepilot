@@ -118,6 +118,17 @@ const historyItem = {
   duration_seconds: 1.2,
 } as const
 
+const projectItem = {
+  project_id: 'project-1',
+  name: 'demo',
+  repository_url: 'https://github.com/acme/demo',
+  created_at: '2026-08-08T12:00:00Z',
+  updated_at: '2026-08-09T12:00:00Z',
+} as const
+
+const emptyProjectCatalog = { items: [], total: 0, limit: 20, offset: 0 } as const
+const persistedProjectCatalog = { items: [projectItem], total: 1, limit: 20, offset: 0 } as const
+
 const filterFindings = [
   finding,
   { ...finding, rule_id: 'PY002', severity: 'critical', message: 'Critical security issue.', category: 'security' },
@@ -180,7 +191,7 @@ function configureCompletedRun() {
 beforeEach(() => {
   window.location.hash = ''
   Object.values(fixtures).forEach((mock) => mock.mockReset())
-  fixtures.getProjects.mockResolvedValue({ items: [] })
+  fixtures.getProjects.mockResolvedValue(emptyProjectCatalog)
   fixtures.getAnalysisHistory.mockResolvedValue({ items: [], total: 0, limit: 20, offset: 0 })
   fixtures.getLlmConfiguration.mockResolvedValue(DEFAULT_LLM_CONFIGURATION)
 })
@@ -188,6 +199,74 @@ beforeEach(() => {
 afterEach(() => cleanup())
 
 describe('analysis history and quality KPI', () => {
+  it('renders persisted repositories immediately on page load', async () => {
+    fixtures.getProjects.mockResolvedValue(persistedProjectCatalog)
+
+    render(<App />)
+
+    expect(await screen.findByRole('table', { name: 'Persisted repositories' })).toBeInTheDocument()
+    expect(screen.getByRole('rowheader', { name: 'demo' })).toBeInTheDocument()
+    expect(screen.getByRole('link', { name: 'https://github.com/acme/demo' })).toBeInTheDocument()
+    expect(screen.getByText(/Aug 9, 2026/)).toBeInTheDocument()
+    expect(screen.queryByText('No repositories yet')).not.toBeInTheDocument()
+  })
+
+  it('shows repository loading state while the catalog request is pending', async () => {
+    const pending = deferred<typeof persistedProjectCatalog>()
+    fixtures.getProjects.mockReturnValue(pending.promise)
+
+    render(<App />)
+
+    expect(screen.getByText('Loading repositories')).toBeInTheDocument()
+    pending.resolve(persistedProjectCatalog)
+    expect(await screen.findByRole('table', { name: 'Persisted repositories' })).toBeInTheDocument()
+  })
+
+  it('renders the empty repository state when the catalog is empty', async () => {
+    fixtures.getProjects.mockResolvedValue(emptyProjectCatalog)
+
+    render(<App />)
+
+    expect(await screen.findByText('No repositories yet')).toBeInTheDocument()
+  })
+
+  it('keeps analysis history available when the project catalog fails', async () => {
+    fixtures.getProjects.mockRejectedValue('projects failure')
+    fixtures.getAnalysisHistory.mockResolvedValue({
+      items: [historyItem],
+      total: 1,
+      limit: 20,
+      offset: 0,
+    })
+
+    render(<App />)
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Analysis history' }))
+
+    expect(await screen.findByRole('rowheader', { name: /demo/ })).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: 'Repositories' }))
+    expect(screen.getByRole('alert')).toHaveTextContent('Repositories unavailable.')
+  })
+
+  it('shows the history fallback when the history request fails with a non-error value', async () => {
+    fixtures.getAnalysisHistory.mockRejectedValue('history failure')
+
+    render(<App />)
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Analysis history' }))
+
+    expect(await screen.findByText('Analysis history unavailable.')).toBeInTheDocument()
+  })
+
+  it('opens analysis history directly from the persisted hash without an active analysis', async () => {
+    window.location.hash = '#analyses'
+
+    render(<App />)
+
+    expect(await screen.findByRole('heading', { name: 'Analysis history' })).toBeInTheDocument()
+    expect(screen.getByText('No analyses')).toBeInTheDocument()
+  })
+
   it('renders persisted KPI columns, opens a row, and deletes only after confirmation', async () => {
     configureCompletedRun()
     fixtures.getAnalysisHistory.mockResolvedValue({ items: [historyItem], total: 1, limit: 20, offset: 0 })

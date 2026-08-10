@@ -225,6 +225,11 @@ node_modules/
 dist/
 *.tsbuildinfo
 
+# Execution-only prompts, reports, and coverage artifacts
+/prompts/
+**/reports/
+**/coverage/
+
 # Operating system and editor files
 .DS_Store
 Thumbs.db
