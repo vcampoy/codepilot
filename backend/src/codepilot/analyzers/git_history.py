@@ -1,9 +1,12 @@
-"""Bounded, local Git history metrics and explainable hotspot scoring."""
+"""Bounded, local Git history metrics and explainable hotspot scoring.
+
+The subprocess boundary is confined to validated local Git arguments.
+"""
 
 from __future__ import annotations
 
 import shutil
-import subprocess
+import subprocess  # nosec B404
 from collections import Counter, defaultdict
 from collections.abc import Mapping
 from dataclasses import dataclass

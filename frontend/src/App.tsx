@@ -388,7 +388,23 @@ function App() {
   )
 }
 
-function FindingsView({ findings, status, summary, error, repositoryUrl, analysisId, onSelectPath }: { findings: AnalysisFinding[]; status: AnalysisStatus | null; summary: AnalysisSummaryResponse['summary']; error: string | null; repositoryUrl: string | null; analysisId: string | null; onSelectPath: (path: string) => void }) {
+function FindingsView({
+  findings,
+  status,
+  summary,
+  error,
+  repositoryUrl,
+  analysisId,
+  onSelectPath,
+}: {
+  findings: AnalysisFinding[]
+  status: AnalysisStatus | null
+  summary: AnalysisSummaryResponse['summary']
+  error: string | null
+  repositoryUrl: string | null
+  analysisId: string | null
+  onSelectPath: (path: string) => void
+}) {
   const [sort, setSort] = useState<FindingSort>({ column: 'severity', direction: 'desc' })
   const [visibleColumns, setVisibleColumns] = useState<FindingColumnKey[]>(() => FINDING_COLUMNS.map(({ key }) => key))
   const [filters, setFilters] = useState<FindingFilters>({ severities: [], types: [] })

@@ -40,8 +40,11 @@ export function createHotspotsMarkdownExport(input: HotspotsMarkdownExportInput)
     '',
     '## Instructions for the coding model',
     '',
-    'Resolve each hotspot using only the evidence in this document. Do not invent evidence, code, findings, or repository context. If evidence is unavailable, say so explicitly and request the missing context.',
-    'Return a concrete remediation plan, proposed change, tests to run, and risks. Preserve behavior unless the evidence justifies a change.',
+    'Resolve each hotspot using only the evidence in this document. Do not invent evidence, ' +
+      'code, findings, or repository context. If evidence is unavailable, say so explicitly ' +
+      'and request the missing context.',
+    'Return a concrete remediation plan, proposed change, tests to run, and risks. ' +
+      'Preserve behavior unless the evidence justifies a change.',
     '',
     sections,
     '',

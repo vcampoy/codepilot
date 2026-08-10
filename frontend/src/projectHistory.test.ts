@@ -1,9 +1,11 @@
 import { describe, expect, it, vi } from 'vitest'
 
+const EMPTY_HISTORY_RESPONSE = { items: [], total: 0, limit: 20, offset: 0 } as const
+
 describe('project history API contract', () => {
   it('exposes project catalog and run endpoints', async () => {
     vi.resetModules()
-    const fetchMock = vi.fn().mockResolvedValue({ ok: true, json: async () => ({ items: [], total: 0, limit: 20, offset: 0 }) })
+    const fetchMock = vi.fn().mockResolvedValue({ ok: true, json: async () => EMPTY_HISTORY_RESPONSE })
     vi.stubGlobal('fetch', fetchMock)
     const api = await import('./api')
     await api.getProjects()
@@ -16,7 +18,7 @@ describe('project history API contract', () => {
 
   it('requests the flat history endpoint and deletes an encoded analysis', async () => {
     vi.resetModules()
-    const fetchMock = vi.fn().mockResolvedValue({ ok: true, json: async () => ({ items: [], total: 0, limit: 20, offset: 0 }) })
+    const fetchMock = vi.fn().mockResolvedValue({ ok: true, json: async () => EMPTY_HISTORY_RESPONSE })
     vi.stubGlobal('fetch', fetchMock)
     const api = await import('./api')
     await api.getAnalysisHistory()

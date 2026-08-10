@@ -1,7 +1,9 @@
 """Persist analyzer identity for findings."""
 from collections.abc import Sequence
-from alembic import op
+
 import sqlalchemy as sa
+from alembic import op
+
 revision = "20260808_0003"
 down_revision: str | None = "20260805_0002"
 branch_labels: str | Sequence[str] | None = None

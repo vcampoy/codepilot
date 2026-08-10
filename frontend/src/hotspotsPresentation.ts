@@ -35,7 +35,10 @@ export function filterHotspots(hotspots: readonly FileInsight[], filters: Hotspo
   return hotspots.filter((hotspot) => selected.size === 0 || selected.has(hotspotRisk(hotspot)))
 }
 
-export function sortHotspots(hotspots: readonly FileInsight[], sort: HotspotSort = { column: 'hotspot_score', direction: 'desc' }): FileInsight[] {
+export function sortHotspots(
+  hotspots: readonly FileInsight[],
+  sort: HotspotSort = { column: 'hotspot_score', direction: 'desc' },
+): FileInsight[] {
   return hotspots
     .map((hotspot, index) => ({ hotspot, index }))
     .sort((left, right) => {

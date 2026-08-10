@@ -163,6 +163,12 @@ const secondContextualFinding = {
 } as const
 
 const multipleContextualFindings = [contextualFinding, secondContextualFinding] as const
+const DEFAULT_LLM_CONFIGURATION = {
+  enabled: false,
+  provider: 'openai',
+  model: 'gpt-4o-mini',
+  api_key_configured: false,
+} as const
 
 function configureCompletedRun() {
   fixtures.createAnalysis.mockResolvedValue({ analysis_id: 'analysis-1', status: 'queued' })
@@ -176,7 +182,7 @@ beforeEach(() => {
   Object.values(fixtures).forEach((mock) => mock.mockReset())
   fixtures.getProjects.mockResolvedValue({ items: [] })
   fixtures.getAnalysisHistory.mockResolvedValue({ items: [], total: 0, limit: 20, offset: 0 })
-  fixtures.getLlmConfiguration.mockResolvedValue({ enabled: false, provider: 'openai', model: 'gpt-4o-mini', api_key_configured: false })
+  fixtures.getLlmConfiguration.mockResolvedValue(DEFAULT_LLM_CONFIGURATION)
 })
 
 afterEach(() => cleanup())

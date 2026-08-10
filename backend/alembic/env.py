@@ -13,7 +13,7 @@ from sqlalchemy.ext.asyncio import async_engine_from_config
 
 sys.path.insert(0, str(Path(__file__).parents[1] / "src"))
 
-from codepilot.core.settings import Settings  # noqa: E402
+from codepilot.core.settings import Settings
 
 config = context.config
 target_metadata = None
