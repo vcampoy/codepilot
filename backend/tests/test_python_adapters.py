@@ -37,6 +37,7 @@ _BANDIT_POLICY_PAYLOAD: Final = json.dumps(
         ]
     }
 )
+_EXPECTED_RUFF_ROOTS: Final = ("backend/src", "packages/src")
 
 
 def test_bandit_policy_excludes_backend_pytest_asserts_but_keeps_production() -> None:
@@ -203,3 +204,27 @@ def test_tool_adapters_capture_version_and_missing_tool_state(tmp_path: Path) ->
     assert bandit.execution is not None and bandit.execution.available
     assert radon.execution is not None and radon.execution.tool == "radon"
     assert runner.calls
+
+
+def test_ruff_analyzer_passes_deterministic_source_roots_for_isolated_isort(tmp_path: Path) -> None:
+    for root in _EXPECTED_RUFF_ROOTS:
+        source = tmp_path / root
+        source.mkdir(parents=True)
+        package = source / ("codepilot" if root.startswith("backend") else "widgets")
+        package.mkdir()
+        (package / "__init__.py").write_text("value = 1\n", encoding="utf-8")
+    runner = FakeRunner(
+        {"ruff": ToolResult(0, "ruff-json", "", ToolExecution("ruff", "0.9", 0.1, True))}
+    )
+
+    asyncio.run(RuffAnalyzer(runner=runner).analyze(AnalyzerContext(tmp_path, "abc123")))
+
+    ruff_scan = next(call for call in runner.calls if call[0] == "ruff" and "check" in call)
+    assert "--isolated" in ruff_scan
+    config_values = tuple(
+        ruff_scan[index + 1] for index, value in enumerate(ruff_scan) if value == "--config"
+    )
+    assert config_values == (
+        'src=["backend/src","packages/src"]',
+        'lint.isort.known-first-party=["codepilot","widgets"]',
+    )

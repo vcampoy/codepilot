@@ -13,7 +13,11 @@ from uuid import UUID
 
 from sqlalchemy.exc import DBAPIError, OperationalError
 
-from codepilot.analyzers.risk_score import FindingRisk, QualityGateConfig, evaluate_quality_gates
+from codepilot.analyzers.risk_score import (
+    FindingRisk,
+    QualityGateConfig,
+    evaluate_quality_gates,
+)
 from codepilot.domain.analysis import (
     AnalysisFinding,
     AnalysisHistoryRecord,

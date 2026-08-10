@@ -249,10 +249,39 @@ class RuffAnalyzer(_PythonToolAnalyzer):
         capabilities=frozenset({"lint"}),
     )
 
+    @staticmethod
+    def _source_roots(root: Path) -> tuple[str, ...]:
+        """Return deterministic Python source roots for Ruff's isolated run."""
+        roots = {
+            path.relative_to(root).as_posix()
+            for path in root.rglob("src")
+            if path.is_dir() and any(path.rglob("*.py"))
+        }
+        return tuple(sorted(roots))
+
+    @staticmethod
+    def _first_party_packages(root: Path, source_roots: tuple[str, ...]) -> tuple[str, ...]:
+        packages = {
+            package.name
+            for source_root in source_roots
+            for package in (root / source_root).iterdir()
+            if package.is_dir() and (package / "__init__.py").exists()
+        }
+        return tuple(sorted(packages))
+
     async def analyze(self, context: AnalyzerContext) -> AnalyzerResult:
         started = time.perf_counter()
+        source_roots = self._source_roots(context.repository_path)
+        args = ["check", ".", "--output-format", "json", "--no-cache", "--isolated"]
+        if source_roots:
+            roots_value = "[" + ",".join(json.dumps(root) for root in source_roots) + "]"
+            args.extend(("--config", f"src={roots_value}"))
+            packages = self._first_party_packages(context.repository_path, source_roots)
+            if packages:
+                packages_value = "[" + ",".join(json.dumps(package) for package in packages) + "]"
+                args.extend(("--config", f"lint.isort.known-first-party={packages_value}"))
         version, scan = await self._run_tool(
-            context, ("check", ".", "--output-format", "json", "--no-cache", "--isolated")
+            context, tuple(args)
         )
         execution = self._execution(version, scan, started)
         if not execution.available:

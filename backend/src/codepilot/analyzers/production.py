@@ -21,7 +21,11 @@ from codepilot.analyzers.generic import (
 )
 from codepilot.analyzers.git_history import GitHistoryError, GitHistoryService
 from codepilot.analyzers.multilanguage_adapters import EslintAnalyzer
-from codepilot.analyzers.python_adapters import BanditAnalyzer, RadonAnalyzer, RuffAnalyzer
+from codepilot.analyzers.python_adapters import (
+    BanditAnalyzer,
+    RadonAnalyzer,
+    RuffAnalyzer,
+)
 from codepilot.domain.analysis import AnalysisFinding, AnalysisResult, AnalyzerOutcome
 from codepilot.domain.insights import build_file_insights
 from codepilot.services.repository_ingestion import RepositorySnapshot

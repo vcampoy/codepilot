@@ -23,7 +23,11 @@ from codepilot.domain.analysis import (
     AnalyzerOutcome,
 )
 from codepilot.domain.insights import FileInsight
-from codepilot.llm.contracts import DeterministicEvidence, EnrichmentResult, EnrichmentTask
+from codepilot.llm.contracts import (
+    DeterministicEvidence,
+    EnrichmentResult,
+    EnrichmentTask,
+)
 from codepilot.main import create_app
 from codepilot.repositories.analysis import (
     InMemoryAnalysisRepository,

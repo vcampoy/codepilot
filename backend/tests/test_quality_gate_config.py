@@ -2,7 +2,11 @@ from typing import Any, cast
 
 import pytest
 
-from codepilot.analyzers.risk_score import FindingRisk, QualityGateConfig, evaluate_quality_gates
+from codepilot.analyzers.risk_score import (
+    FindingRisk,
+    QualityGateConfig,
+    evaluate_quality_gates,
+)
 from codepilot.domain.quality import (
     QualityGatePolicy,
     QualityProfile,
