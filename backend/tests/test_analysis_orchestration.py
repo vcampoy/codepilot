@@ -751,7 +751,6 @@ def test_celery_recovery_reconstructs_original_failure_classification() -> None:
             self, _analysis_id: UUID, *, terminalize_transient: bool = False
         ) -> None:
             del terminalize_transient
-            return None
 
         async def close(self) -> None:
             return None

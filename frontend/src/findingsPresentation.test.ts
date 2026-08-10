@@ -71,9 +71,15 @@ describe('findings presentation', () => {
   })
 
   it('sorts case-insensitively, preserves ties, and does not mutate input', () => {
-    const findings = [finding('low', 'tie-1', 'Same'), finding('low', 'tie-2', 'same'), finding('low', 'tie-3', 'other')] as const
+    const findings = [
+      finding('low', 'tie-1', 'Same'),
+      finding('low', 'tie-2', 'same'),
+      finding('low', 'tie-3', 'other'),
+    ] as const
     const original = findings.map((item) => item.rule_id)
-    expect(sortFindings(findings, { column: 'description', direction: 'asc' }).map((item) => item.rule_id)).toEqual(['tie-3', 'tie-1', 'tie-2'])
+    expect(
+      sortFindings(findings, { column: 'description', direction: 'asc' }).map((item) => item.rule_id),
+    ).toEqual(['tie-3', 'tie-1', 'tie-2'])
     expect(findings.map((item) => item.rule_id)).toEqual(original)
   })
 

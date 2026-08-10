@@ -589,7 +589,9 @@ function OverviewView({
   const [enrichment, setEnrichment] = useState<EnrichmentResponse | null>(null)
   const [enrichmentBusy, setEnrichmentBusy] = useState(false)
   const [enrichmentError, setEnrichmentError] = useState<string | null>(null)
-  const severityTotal = summary ? Object.values(summary.finding_count_by_severity).reduce((total, value) => total + value, 0) : null
+  const severityTotal = summary
+    ? Object.values(summary.finding_count_by_severity).reduce((total, value) => total + value, 0)
+    : null
   const risk = summary?.risk_assessment
   const cards = [
     [
@@ -795,12 +797,17 @@ function HotspotsView({ hotspots, status, error, repositoryUrl, analysisId, onSe
   if (status !== 'completed') return <EmptyState title="Hotspots pending" description="Hotspots appear after deterministic analysis completes." />
   if (error && hotspots.length === 0) return <EmptyState title="Hotspots unavailable" description={error} />
   if (hotspots.length === 0) return <EmptyState title="No hotspots" description="No file reached the configured hotspot threshold." />
+  const hotspotCountLabel = filteredHotspots.length === hotspots.length
+    ? hotspots.length
+    : `${filteredHotspots.length} of ${hotspots.length}`
   const sortLabel = HOTSPOT_COLUMNS.find(({ key }) => key === sort.column)?.label ?? sort.column
   return (
     <section id="hotspots" className="page-grid">
       <div className="panel table-panel">
         <div className="panel-title">
-          <span>Hotspots ({filteredHotspots.length === hotspots.length ? hotspots.length : `${filteredHotspots.length} of ${hotspots.length}`})</span>
+          <span>
+            Hotspots ({hotspotCountLabel})
+          </span>
           <div className="table-actions">
             <button className="secondary-button" onClick={openFilterDialog} type="button">Filter</button>
             <button
@@ -1065,7 +1072,13 @@ function QualityGateView({
   if (!summary?.quality_gate) return <section className="page-grid"><div className="panel"><div className="panel-title"><span>Quality gate</span><span className="muted">Evidence only</span></div><EmptyState title="Quality-gate data unavailable" description="The completed analysis did not include a quality-gate evaluation." compact /></div></section>
   const save = async () => {
     if (!projectId) return
-    await saveQualityPolicy(projectId, { version: 1, max_new_critical_findings: maxCritical ? Number(maxCritical) : null, max_risk_score: maxRisk ? Number(maxRisk) : null, max_new_hotspots: maxHotspots ? Number(maxHotspots) : null, profiles })
+    await saveQualityPolicy(projectId, {
+      version: 1,
+      max_new_critical_findings: maxCritical ? Number(maxCritical) : null,
+      max_risk_score: maxRisk ? Number(maxRisk) : null,
+      max_new_hotspots: maxHotspots ? Number(maxHotspots) : null,
+      profiles,
+    })
     setSaveMessage('Saved for the next analysis.')
   }
   const importFile = async (file: File) => {

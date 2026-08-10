@@ -59,7 +59,10 @@ describe('findings Markdown export', () => {
     expect(exported.content).toContain('- Repository: https://github.com/vcampoy/codepilot')
     expect(exported.content).toContain('- Analysis: analysis-123')
     expect(exported.content).toContain('- Total findings: 2')
-    expect(exported.content).toContain('Line contains \\| and &lt;unsafe&gt;<br>second line | medium | E501 | src/main.py:12-14 | python.ruff | Style')
+    expect(exported.content).toContain(
+      'Line contains \\| and &lt;unsafe&gt;<br>second line | medium | E501 | ' +
+        'src/main.py:12-14 | python.ruff | Style',
+    )
     expect(exported.content).toContain('Avoid any | high | no-any | src/app.ts:3 | javascript.eslint | Security')
     expect(exported.content).toContain('## Finding details')
     expect(exported.content).toContain('### 1. [medium] Long line rule')

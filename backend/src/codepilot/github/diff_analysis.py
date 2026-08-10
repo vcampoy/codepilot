@@ -65,7 +65,7 @@ class _AddedLineRangeCollector:
         return True
 
     def _consume_content(self, line: str) -> None:
-        if self.current_file is None or line.startswith("--- ") or line.startswith("diff "):
+        if self.current_file is None or line.startswith(("--- ", "diff ")):
             return
         if line.startswith("+") and not line.startswith("+++"):
             self.active_start = (

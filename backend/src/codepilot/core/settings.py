@@ -175,7 +175,7 @@ class Settings(BaseSettings):
         if self.github_enabled and not all(github_values):
             return (
                 "github_app_id, github_private_key, and github_webhook_secret "
-                "are required when GitHub is enabled",
+                + "are required when GitHub is enabled",
             )
         return ()
 

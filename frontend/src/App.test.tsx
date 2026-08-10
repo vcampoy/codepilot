@@ -259,14 +259,30 @@ describe('analysis history and quality KPI', () => {
 
   it('keeps failed bulk deletions selected and reports the failure', async () => {
     configureCompletedRun()
-    fixtures.getAnalysisHistory.mockResolvedValue({ items: [{ ...historyItem, analysis_id: 'analysis-2', repository_name: 'other' }, { ...historyItem, analysis_id: 'analysis-3', repository_name: 'third' }], total: 2, limit: 20, offset: 0 })
-    fixtures.deleteAnalysis.mockImplementation(async (id: string) => { if (id === 'analysis-2') throw new Error('Conflict') })
+    fixtures.getAnalysisHistory.mockResolvedValue({
+      items: [
+        { ...historyItem, analysis_id: 'analysis-2', repository_name: 'other' },
+        { ...historyItem, analysis_id: 'analysis-3', repository_name: 'third' },
+      ],
+      total: 2,
+      limit: 20,
+      offset: 0,
+    })
+    fixtures.deleteAnalysis.mockImplementation(async (id: string) => {
+      if (id === 'analysis-2') throw new Error('Conflict')
+    })
     render(<App />)
-    fireEvent.submit(screen.getByRole('button', { name: 'Analyze repository' }).closest('form')!, { preventDefault: () => undefined })
+    fireEvent.submit(
+      screen.getByRole('button', { name: 'Analyze repository' }).closest('form')!,
+      { preventDefault: () => undefined },
+    )
     fireEvent.click(await screen.findByRole('button', { name: 'Analysis history' }))
     fireEvent.click(screen.getByRole('checkbox', { name: 'Select all analyses' }))
     fireEvent.click(screen.getByRole('button', { name: 'Delete selected (2)' }))
-    fireEvent.click(within(screen.getByRole('dialog', { name: 'Delete selected analyses?' })).getByRole('button', { name: 'Delete analyses' }))
+    const dialog = screen.getByRole('dialog', { name: 'Delete selected analyses?' })
+    fireEvent.click(
+      within(dialog).getByRole('button', { name: 'Delete analyses' }),
+    )
     await waitFor(() => expect(screen.getByRole('alert')).toHaveTextContent('1 analysis could not be deleted.'))
     expect(screen.getByRole('checkbox', { name: 'Select analysis other' })).toBeChecked()
   })
@@ -520,7 +536,10 @@ describe('completed analysis result loading', () => {
     fixtures.getAnalysisFileDetail.mockResolvedValue({ ...insight, findings: contextualFindings })
 
     render(<App />)
-    fireEvent.submit(screen.getByRole('button', { name: 'Analyze repository' }).closest('form')!, { preventDefault: () => undefined })
+    fireEvent.submit(
+      screen.getByRole('button', { name: 'Analyze repository' }).closest('form')!,
+      { preventDefault: () => undefined },
+    )
     fireEvent.click(await screen.findByRole('button', { name: 'File detail' }))
     await waitFor(() => expect(screen.getByRole('button', { name: /PY001/ })).toBeInTheDocument())
     expect(screen.queryByText('eval(x)')).not.toBeInTheDocument()

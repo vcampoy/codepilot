@@ -84,7 +84,9 @@ function formatFinding(finding: FileDetail['findings'][number]): string {
 }
 
 function formatSort(sort: HotspotSort): string {
-  const column = sort.column === 'hotspot_score' ? 'Hotspot score' : sort.column.charAt(0).toUpperCase() + sort.column.slice(1)
+  const column = sort.column === 'hotspot_score'
+    ? 'Hotspot score'
+    : sort.column.charAt(0).toUpperCase() + sort.column.slice(1)
   return `${column} (${sort.direction === 'asc' ? 'ascending' : 'descending'})`
 }
 

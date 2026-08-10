@@ -161,6 +161,17 @@ diff --git a/src/b.py b/src/b.py
     }
 
 
+def test_diff_parser_ignores_metadata_prefixes_and_keeps_added_lines() -> None:
+    diff = """diff --git a/src/a.py b/src/a.py
+@@ -1,1 +1,3 @@
+--- removed metadata
+diff metadata
++added content
+"""
+
+    assert parse_added_lines(diff) == {"src/a.py": ((1, 1),)}
+
+
 def test_app_authenticator_uses_short_lived_claims_without_logging_token() -> None:
     claims: dict[str, object] = {}
 
