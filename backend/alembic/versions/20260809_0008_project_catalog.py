@@ -27,7 +27,13 @@ def upgrade() -> None:
         sa.UniqueConstraint("workspace_id", "repository_key", name="uq_codepilot_project_identity"),
     )
     op.add_column("codepilot_analyses", sa.Column("project_id", postgresql.UUID(as_uuid=True), nullable=True))
-    op.create_foreign_key("fk_analysis_project", "codepilot_analyses", "codepilot_projects", ["project_id"], ["project_id"])
+    op.create_foreign_key(
+        "fk_analysis_project",
+        "codepilot_analyses",
+        "codepilot_projects",
+        ["project_id"],
+        ["project_id"],
+    )
     bind = op.get_bind()
     project_rows_query = (
         "SELECT workspace_id, min(repository_url) AS repository_url, "
