@@ -23,9 +23,9 @@ __all__ = [
     "AnalyzerRegistry",
     "AnalyzerResult",
     "DeterministicAnalyzerOrchestrator",
-    "NormalizedFinding",
     "FileHistoryMetric",
     "GitHistoryConfig",
     "GitHistoryMetrics",
     "GitHistoryService",
+    "NormalizedFinding",
 ]

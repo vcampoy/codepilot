@@ -50,7 +50,8 @@ def test_configured_celery_app_registers_analysis_task_in_fresh_process() -> Non
         "assert 'codepilot.analysis.recover_stale' in celery_app.tasks"
     )
 
-    result = subprocess.run(
+    # The executable and arguments are test-owned constants for this local fixture.
+    result = subprocess.run(  # nosec B603
         [sys.executable, "-c", command],
         cwd=backend_root,
         env=environment,

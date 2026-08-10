@@ -10,7 +10,11 @@ export function toggleHistorySelection(selected: ReadonlySet<string>, analysisId
   return next
 }
 
-export function toggleAllHistorySelection(selected: ReadonlySet<string>, visibleIds: readonly string[], checked: boolean): Set<string> {
+export function toggleAllHistorySelection(
+  selected: ReadonlySet<string>,
+  visibleIds: readonly string[],
+  checked: boolean,
+): Set<string> {
   const next = new Set(selected)
   visibleIds.forEach((id) => (checked ? next.add(id) : next.delete(id)))
   return next

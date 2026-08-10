@@ -251,7 +251,10 @@ describe('analysis history and quality KPI', () => {
     })
     fixtures.deleteAnalysis.mockResolvedValue(undefined)
     render(<App />)
-    fireEvent.submit(screen.getByRole('button', { name: 'Analyze repository' }).closest('form')!, { preventDefault: () => undefined })
+    fireEvent.submit(
+      screen.getByRole('button', { name: 'Analyze repository' }).closest('form')!,
+      { preventDefault: () => undefined },
+    )
     fireEvent.click(await screen.findByRole('button', { name: 'Analysis history' }))
 
     fireEvent.click(screen.getByRole('checkbox', { name: 'Select analysis demo' }))

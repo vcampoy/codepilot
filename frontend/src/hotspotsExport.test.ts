@@ -78,7 +78,21 @@ describe('hotspots Markdown export', () => {
     }
     const unsafeDetail: FileDetail = {
       ...unsafeHotspot,
-      findings: [{ path: unsafeHotspot.path, rule_id: 'R|1', analyzer: 'tool', severity: 'high', category: 'type_[x]', title: 'Title_[x]*', message: 'Do *not* use `x` | now', evidence: 'Evidence_[x]*', start_line: 1, end_line: 1, remediation: 'Use [safe]_* instead.' }],
+      findings: [
+        {
+          path: unsafeHotspot.path,
+          rule_id: 'R|1',
+          analyzer: 'tool',
+          severity: 'high',
+          category: 'type_[x]',
+          title: 'Title_[x]*',
+          message: 'Do *not* use `x` | now',
+          evidence: 'Evidence_[x]*',
+          start_line: 1,
+          end_line: 1,
+          remediation: 'Use [safe]_* instead.',
+        },
+      ],
     }
     const file = createHotspotsMarkdownExport({
       repositoryUrl: 'https://github.com/acme/[demo]_*.git',

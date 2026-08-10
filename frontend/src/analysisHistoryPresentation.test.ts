@@ -1,5 +1,10 @@
 import { describe, expect, it } from 'vitest'
-import { formatHistoryDate, formatHistoryRisk, isHistoryActivationKey, totalHotspots } from './analysisHistoryPresentation'
+import {
+  formatHistoryDate,
+  formatHistoryRisk,
+  isHistoryActivationKey,
+  totalHotspots,
+} from './analysisHistoryPresentation'
 
 const HISTORY_SCORE = 0.8
 

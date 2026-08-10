@@ -120,5 +120,12 @@ function escapeInline(value: string): string {
 }
 
 function formatLocalTimestamp(value: Date): string {
-  return [value.getFullYear().toString().padStart(4, '0'), (value.getMonth() + 1).toString().padStart(2, '0'), value.getDate().toString().padStart(2, '0'), value.getHours().toString().padStart(2, '0'), value.getMinutes().toString().padStart(2, '0'), value.getSeconds().toString().padStart(2, '0')].join('-')
+  return [
+    value.getFullYear().toString().padStart(4, '0'),
+    (value.getMonth() + 1).toString().padStart(2, '0'),
+    value.getDate().toString().padStart(2, '0'),
+    value.getHours().toString().padStart(2, '0'),
+    value.getMinutes().toString().padStart(2, '0'),
+    value.getSeconds().toString().padStart(2, '0'),
+  ].join('-')
 }

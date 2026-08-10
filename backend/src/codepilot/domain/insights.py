@@ -6,7 +6,11 @@ from collections import defaultdict
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 
-from codepilot.analyzers.risk_score import RiskAssessment, RiskScoreConfig, calculate_risk
+from codepilot.analyzers.risk_score import (
+    RiskAssessment,
+    RiskScoreConfig,
+    calculate_risk,
+)
 from codepilot.domain.analysis import AnalysisFinding
 
 _SEVERITY_WEIGHTS = {
