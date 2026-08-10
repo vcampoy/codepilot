@@ -331,7 +331,13 @@ describe('analysis history and quality KPI', () => {
     expect(within(model).getByRole('option', { name: 'future-model' })).toBeInTheDocument()
     fireEvent.change(model, { target: { value: 'gpt-4o' } })
     fireEvent.click(screen.getByRole('button', { name: 'Save LLM configuration' }))
-    await waitFor(() => expect(fixtures.saveLlmConfiguration).toHaveBeenCalledWith({ enabled: true, provider: 'openai', model: 'gpt-4o' }))
+    await waitFor(() =>
+      expect(fixtures.saveLlmConfiguration).toHaveBeenCalledWith({
+        enabled: true,
+        provider: 'openai',
+        model: 'gpt-4o',
+      }),
+    )
   })
 
   it('disables the model and save controls when LLM configuration fails to load', async () => {
@@ -544,7 +550,11 @@ describe('completed analysis result loading', () => {
     })
     fireEvent.click(await screen.findByRole('button', { name: 'File detail' }))
     await waitFor(() => expect(screen.getByRole('heading', { name: 'src/main.py' })).toBeInTheDocument())
-    expect(fixtures.getAnalysisFileDetail).toHaveBeenCalledWith('analysis-1', 'src/main.py', expect.objectContaining({ signal: expect.any(AbortSignal) }))
+    expect(fixtures.getAnalysisFileDetail).toHaveBeenCalledWith(
+      'analysis-1',
+      'src/main.py',
+      expect.objectContaining({ signal: expect.any(AbortSignal) }),
+    )
 
     fireEvent.click(screen.getByRole('button', { name: 'Quality gate' }))
     expect(screen.getByText('Risk score')).toBeInTheDocument()

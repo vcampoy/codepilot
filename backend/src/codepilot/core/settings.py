@@ -158,7 +158,7 @@ class Settings(BaseSettings):
         ):
             return (
                 "cors_origins must contain only HTTPS origins and must not be "
-                "wildcard in production",
+                + "wildcard in production",
             )
         return ()
 
