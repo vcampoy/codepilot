@@ -222,6 +222,26 @@ describe('analysis history and quality KPI', () => {
     expect(await screen.findByRole('table', { name: 'Persisted repositories' })).toBeInTheDocument()
   })
 
+  it('disables repository submission while queueing and restores it after resolution', async () => {
+    const pending = deferred<{ analysis_id: string; status: 'queued' }>()
+    fixtures.createAnalysis.mockReturnValue(pending.promise)
+
+    render(<App />)
+
+    fireEvent.submit(screen.getByRole('button', { name: 'Analyze repository' }).closest('form')!, {
+      preventDefault: () => undefined,
+    })
+
+    const queueButton = await screen.findByRole('button', { name: 'Queueing...' })
+    expect(queueButton).toBeDisabled()
+
+    pending.resolve({ analysis_id: 'analysis-1', status: 'queued' })
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Repositories' })).toBeInTheDocument())
+    fireEvent.click(screen.getByRole('button', { name: 'Repositories' }))
+
+    expect(await screen.findByRole('button', { name: 'Analyze repository' })).not.toBeDisabled()
+  })
+
   it('renders the empty repository state when the catalog is empty', async () => {
     fixtures.getProjects.mockResolvedValue(emptyProjectCatalog)
 

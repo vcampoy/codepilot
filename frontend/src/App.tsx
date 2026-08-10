@@ -593,7 +593,9 @@ function WorkspaceContent(props: WorkspaceViewProps) {
                     type="url"
                     value={props.repositoryUrl}
                   />
-                  <button disabled={props.busy} type="submit">{props.busy ? 'Queueing...' : 'Analyze repository'}</button>
+                  <button
+                    disabled={props.busy}
+                    type="submit">{props.busy ? 'Queueing...' : 'Analyze repository'}</button>
                 </div>
                 <small>Public HTTPS Git repositories only. No credentials or repository code are executed.</small>
               </form>

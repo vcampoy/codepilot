@@ -37,7 +37,10 @@ _BANDIT_POLICY_PAYLOAD: Final = json.dumps(
         ]
     }
 )
-_EXPECTED_RUFF_ROOTS: Final = ("backend/src", "packages/src")
+_EXPECTED_RUFF_SOURCE_ROOTS: Final[tuple[tuple[str, str], ...]] = (
+    ("backend/src", "codepilot"),
+    ("packages/src", "widgets"),
+)
 
 
 def test_bandit_policy_excludes_backend_pytest_asserts_but_keeps_production() -> None:
@@ -207,10 +210,10 @@ def test_tool_adapters_capture_version_and_missing_tool_state(tmp_path: Path) ->
 
 
 def test_ruff_analyzer_passes_deterministic_source_roots_for_isolated_isort(tmp_path: Path) -> None:
-    for root in _EXPECTED_RUFF_ROOTS:
+    for root, package_name in _EXPECTED_RUFF_SOURCE_ROOTS:
         source = tmp_path / root
         source.mkdir(parents=True)
-        package = source / ("codepilot" if root.startswith("backend") else "widgets")
+        package = source / package_name
         package.mkdir()
         (package / "__init__.py").write_text("value = 1\n", encoding="utf-8")
     runner = FakeRunner(
