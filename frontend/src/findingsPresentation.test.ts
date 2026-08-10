@@ -54,7 +54,13 @@ describe('findings presentation', () => {
   })
 
   it('counts and sorts findings by severity while preserving ties', () => {
-    const findings = [finding('info', 'low'), finding('error', 'high'), finding('critical', 'critical'), finding('warning', 'medium'), finding('error', 'high-2')]
+    const findings = [
+      finding('info', 'low'),
+      finding('error', 'high'),
+      finding('critical', 'critical'),
+      finding('warning', 'medium'),
+      finding('error', 'high-2'),
+    ]
     expect(sortFindings(findings, { column: 'severity', direction: 'desc' }).map((item) => item.rule_id)).toEqual(['critical', 'high', 'high-2', 'medium', 'low'])
     expect(severityCounts(findings)).toEqual({ critical: 1, high: 2, medium: 1, low: 1 })
   })

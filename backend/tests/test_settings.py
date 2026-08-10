@@ -66,15 +66,15 @@ def test_production_rejects_unsafe_defaults() -> None:
 
 
 def test_production_requires_complete_safe_configuration() -> None:
-    settings = dict(
-        environment="production",
-        database_url="postgresql+asyncpg://app:strong-password@db:5432/app",
-        redis_url="rediss://redis.internal:6380/0",
-        celery_broker_url="rediss://redis.internal:6380/0",
-        celery_result_backend="rediss://redis.internal:6380/1",
-        log_format="json",
-        cors_origins=["https://app.example.com"],
-    )
+    settings = {
+        "environment": "production",
+        "database_url": "postgresql+asyncpg://app:strong-password@db:5432/app",
+        "redis_url": "rediss://redis.internal:6380/0",
+        "celery_broker_url": "rediss://redis.internal:6380/0",
+        "celery_result_backend": "rediss://redis.internal:6380/1",
+        "log_format": "json",
+        "cors_origins": ["https://app.example.com"],
+    }
     with pytest.raises(ValidationError, match="llm_provider"):
         Settings(**settings, llm_enabled=True)  # type: ignore[arg-type]
 

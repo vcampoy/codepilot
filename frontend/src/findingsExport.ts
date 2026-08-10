@@ -102,7 +102,15 @@ function formatFindingRow(finding: AnalysisFinding): string {
   const location = finding.start_line === finding.end_line
     ? `${finding.path}:${finding.start_line}`
     : `${finding.path}:${finding.start_line}-${finding.end_line}`
-  return `| ${escapeMarkdownCell(finding.message)} | ${displaySeverity(finding.severity)} | ${escapeMarkdownCell(finding.rule_id)} | ${escapeMarkdownCell(location)} | ${escapeMarkdownCell(finding.analyzer)} | ${escapeMarkdownCell(categoryLabel(finding.category))} |`
+  const cells = [
+    escapeMarkdownCell(finding.message),
+    displaySeverity(finding.severity),
+    escapeMarkdownCell(finding.rule_id),
+    escapeMarkdownCell(location),
+    escapeMarkdownCell(finding.analyzer),
+    escapeMarkdownCell(categoryLabel(finding.category)),
+  ]
+  return `| ${cells.join(' | ')} |`
 }
 
 function formatFindingDetails(finding: AnalysisFinding, index: number): string {

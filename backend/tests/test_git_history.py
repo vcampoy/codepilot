@@ -1,6 +1,7 @@
 from __future__ import annotations
 
-import subprocess
+# This fixture invokes only test-owned Git commands.
+import subprocess  # nosec B404
 from datetime import UTC, datetime
 from pathlib import Path
 

@@ -1,4 +1,3 @@
-# ruff: noqa: E501
 """Application service for asynchronous repository analysis orchestration."""
 
 from __future__ import annotations

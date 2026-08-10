@@ -372,7 +372,20 @@ function App() {
           return result
         }} />}
         {activeView === 'overview' && <OverviewView analysisId={analysisId} status={status} summary={summary} />}
-        {activeView === 'findings' && <FindingsView findings={findings} status={status} summary={summary} error={error || findingsError} repositoryUrl={analyzedRepositoryUrl} analysisId={analysisId} onSelectPath={(path) => { setSelectedFilePath(path); navigate('files') }} />}
+        {activeView === 'findings' && (
+          <FindingsView
+            findings={findings}
+            status={status}
+            summary={summary}
+            error={error || findingsError}
+            repositoryUrl={analyzedRepositoryUrl}
+            analysisId={analysisId}
+            onSelectPath={(path) => {
+              setSelectedFilePath(path)
+              navigate('files')
+            }}
+          />
+        )}
         {activeView === 'hotspots' && (
           <HotspotsView
             hotspots={hotspots}
@@ -473,7 +486,9 @@ function FindingsView({
   }
   const clearDraftFilters = () => setDraftFilters({ severities: [], types: [] })
   const toggleColumn = (column: FindingColumnKey) => {
-    const next = visibleColumns.includes(column) ? visibleColumns.filter((key) => key !== column) : [...visibleColumns, column]
+    const next = visibleColumns.includes(column)
+      ? visibleColumns.filter((key) => key !== column)
+      : [...visibleColumns, column]
     setVisibleColumns(next)
     setSort((current) => reconcileFindingSort(current, next))
   }
@@ -931,7 +946,21 @@ function HistoryView({
   )
 }
 
-function HotspotsView({ hotspots, status, error, repositoryUrl, analysisId, onSelectPath }: { hotspots: FileInsight[]; status: AnalysisStatus | null; error: string | null; repositoryUrl: string | null; analysisId: string | null; onSelectPath: (path: string) => void }) {
+function HotspotsView({
+  hotspots,
+  status,
+  error,
+  repositoryUrl,
+  analysisId,
+  onSelectPath,
+}: {
+  hotspots: FileInsight[]
+  status: AnalysisStatus | null
+  error: string | null
+  repositoryUrl: string | null
+  analysisId: string | null
+  onSelectPath: (path: string) => void
+}) {
   const [sort, setSort] = useState<HotspotSort>({ column: 'hotspot_score', direction: 'desc' })
   const [filters, setFilters] = useState<HotspotFilters>({ risks: [] })
   const [draftFilters, setDraftFilters] = useState<HotspotFilters>({ risks: [] })
@@ -1158,7 +1187,25 @@ function FindingDetailCard({
   )
 }
 
-function FileDetailView({ detail, path, files, status, busy, error, catalogError, onSelectPath }: { detail: FileDetail | null; path: string | null; files: FileInsight[]; status: AnalysisStatus | null; busy: boolean; error: string | null; catalogError: string | null; onSelectPath: (path: string) => void }) {
+function FileDetailView({
+  detail,
+  path,
+  files,
+  status,
+  busy,
+  error,
+  catalogError,
+  onSelectPath,
+}: {
+  detail: FileDetail | null
+  path: string | null
+  files: FileInsight[]
+  status: AnalysisStatus | null
+  busy: boolean
+  error: string | null
+  catalogError: string | null
+  onSelectPath: (path: string) => void
+}) {
   const [expandedFindingKey, setExpandedFindingKey] = useState<string | null>(null)
   useEffect(() => setExpandedFindingKey(null), [path])
   if (status !== 'completed') {

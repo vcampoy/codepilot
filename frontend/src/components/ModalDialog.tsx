@@ -15,7 +15,15 @@ type ModalDialogProps = {
   className?: string
 }
 
-export function ModalDialog({ children, footer, open, title, onCancel, onSubmit, className = 'filter-dialog' }: ModalDialogProps) {
+export function ModalDialog({
+  children,
+  footer,
+  open,
+  title,
+  onCancel,
+  onSubmit,
+  className = 'filter-dialog',
+}: ModalDialogProps) {
   const dialogRef = useRef<HTMLElement>(null)
   const returnFocusRef = useRef<HTMLElement | null>(null)
   const onCancelRef = useRef(onCancel)

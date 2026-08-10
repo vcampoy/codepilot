@@ -87,7 +87,6 @@ def create_analysis_task(
             ) from error
         except TransientAnalysisError as error:
             raise self.retry(exc=error, countdown=5, max_retries=3) from error
-        return
 
     return run
 

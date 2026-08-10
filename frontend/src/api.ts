@@ -68,7 +68,12 @@ export interface QualityGate {
 export interface QualityRule { language: string; analyzer: string; rule_id: string; enabled: boolean }
 export interface QualityProfile { language: string; rules: QualityRule[] }
 export interface QualityPolicy { version: number; configured: boolean; max_new_critical_findings: number | null; max_risk_score: number | null; max_new_hotspots: number | null; profiles: QualityProfile[] }
-export interface FileInsight { path: string; hotspot_score: number; risk: RiskAssessment | null; metrics: Record<string, number> }
+export interface FileInsight {
+  path: string
+  hotspot_score: number
+  risk: RiskAssessment | null
+  metrics: Record<string, number>
+}
 export interface FileDetail extends FileInsight { findings: AnalysisFinding[] }
 export interface AnalysisFilesResponse { items: FileInsight[]; total: number; limit: number; offset: number }
 

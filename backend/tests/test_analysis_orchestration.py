@@ -753,7 +753,7 @@ def test_celery_recovery_reconstructs_original_failure_classification() -> None:
             del terminalize_transient
 
         async def close(self) -> None:
-            return None
+            pass
 
     celery = create_celery_app()
     service = RecoveryService()
