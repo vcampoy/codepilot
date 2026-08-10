@@ -835,6 +835,16 @@ describe('completed analysis result loading', () => {
     })
     await waitFor(() => expect(screen.getByText('Imported 1 rules; 0 unsupported.')).toBeInTheDocument())
     expect(fixtures.importQualityProfile).toHaveBeenCalledWith('project-1', '<profile />')
+    fixtures.importQualityProfile.mockRejectedValueOnce(new Error('Import failed by test'))
+    fireEvent.change(screen.getByLabelText('Import SonarQube profile XML'), {
+      target: { files: [new File(['<invalid />'], 'invalid.xml', { type: 'application/xml' })] },
+    })
+    await waitFor(() => expect(screen.getByText('Import failed by test')).toBeInTheDocument())
+    fixtures.importQualityProfile.mockRejectedValueOnce('invalid profile')
+    fireEvent.change(screen.getByLabelText('Import SonarQube profile XML'), {
+      target: { files: [new File(['<broken />'], 'broken.xml', { type: 'application/xml' })] },
+    })
+    await waitFor(() => expect(screen.getByText('Import failed.')).toBeInTheDocument())
     fireEvent.click(screen.getByRole('button', { name: 'Open findings' }))
     expect(window.location.hash).toBe('#findings')
   })
