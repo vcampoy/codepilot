@@ -71,7 +71,11 @@ describe('hotspots Markdown export', () => {
   })
 
   it('escapes adversarial metadata, paths, messages, and remediation', () => {
-    const unsafeHotspot: FileInsight = { ...hotspots[0], path: 'src/[unsafe]_*|.py', risk: { ...hotspots[0].risk!, version: 'v_[unsafe]*' } }
+    const unsafeHotspot: FileInsight = {
+      ...hotspots[0],
+      path: 'src/[unsafe]_*|.py',
+      risk: { ...hotspots[0].risk!, version: 'v_[unsafe]*' },
+    }
     const unsafeDetail: FileDetail = {
       ...unsafeHotspot,
       findings: [{ path: unsafeHotspot.path, rule_id: 'R|1', analyzer: 'tool', severity: 'high', category: 'type_[x]', title: 'Title_[x]*', message: 'Do *not* use `x` | now', evidence: 'Evidence_[x]*', start_line: 1, end_line: 1, remediation: 'Use [safe]_* instead.' }],

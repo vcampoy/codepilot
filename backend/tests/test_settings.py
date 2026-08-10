@@ -80,15 +80,15 @@ def test_production_requires_complete_safe_configuration() -> None:
 
 
 def test_production_requires_tls_redis_urls() -> None:
-    settings = dict(
-        environment="production",
-        database_url="postgresql+asyncpg://app:strong-password@db:5432/app",
-        redis_url="redis://redis.internal:6379/0",
-        celery_broker_url="redis://redis.internal:6379/0",
-        celery_result_backend="redis://redis.internal:6379/1",
-        log_format="json",
-        cors_origins=["https://app.example.com"],
-    )
+    settings = {
+        "environment": "production",
+        "database_url": "postgresql+asyncpg://app:strong-password@db:5432/app",
+        "redis_url": "redis://redis.internal:6379/0",
+        "celery_broker_url": "redis://redis.internal:6379/0",
+        "celery_result_backend": "redis://redis.internal:6379/1",
+        "log_format": "json",
+        "cors_origins": ["https://app.example.com"],
+    }
 
     with pytest.raises(ValidationError, match="rediss"):
         Settings(**settings)  # type: ignore[arg-type]

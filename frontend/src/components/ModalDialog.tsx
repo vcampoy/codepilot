@@ -1,7 +1,9 @@
 import { useEffect, useId, useRef } from 'react'
 import type { FormEvent, KeyboardEvent, ReactNode } from 'react'
 
-const FOCUSABLE_SELECTOR = 'button:not(:disabled), input:not(:disabled), select:not(:disabled), textarea:not(:disabled), [tabindex]:not([tabindex="-1"])'
+const FOCUSABLE_SELECTOR =
+  'button:not(:disabled), input:not(:disabled), select:not(:disabled), ' +
+  'textarea:not(:disabled), [tabindex]:not([tabindex="-1"])'
 
 type ModalDialogProps = {
   children: ReactNode
@@ -81,7 +83,16 @@ export function ModalDialog({ children, footer, open, title, onCancel, onSubmit,
           {content}
         </form>
       ) : (
-        <div aria-labelledby={titleId} aria-modal="true" className={className} onKeyDown={keepFocusInside} ref={(node) => { dialogRef.current = node }} role="dialog">
+        <div
+          aria-labelledby={titleId}
+          aria-modal="true"
+          className={className}
+          onKeyDown={keepFocusInside}
+          ref={(node) => {
+            dialogRef.current = node
+          }}
+          role="dialog"
+        >
           {content}
         </div>
       )}

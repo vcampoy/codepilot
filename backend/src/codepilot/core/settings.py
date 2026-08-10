@@ -142,7 +142,11 @@ class Settings(BaseSettings):
 
     def _production_database_errors(self) -> tuple[str, ...]:
         database = urlsplit(self.database_url.get_secret_value())
-        if database.username == "codepilot" and database.password == "codepilot":
+        # Reject the intentionally recognized default credential in production.
+        if (
+            database.username == "codepilot"  # nosec B105
+            and database.password == "codepilot"  # nosec B105
+        ):
             return ("database_url must not use the default database credentials in production",)
         return ()
 

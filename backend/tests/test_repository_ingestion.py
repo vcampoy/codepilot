@@ -1,7 +1,7 @@
 import asyncio
 import json
 import os
-import subprocess
+import subprocess  # nosec B404: test-owned executable and arguments are fixed constants.
 import sys
 import tempfile
 import time

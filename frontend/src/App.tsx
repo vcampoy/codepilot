@@ -368,7 +368,19 @@ function App() {
         }} />}
         {activeView === 'overview' && <OverviewView analysisId={analysisId} status={status} summary={summary} />}
         {activeView === 'findings' && <FindingsView findings={findings} status={status} summary={summary} error={error || findingsError} repositoryUrl={analyzedRepositoryUrl} analysisId={analysisId} onSelectPath={(path) => { setSelectedFilePath(path); navigate('files') }} />}
-        {activeView === 'hotspots' && <HotspotsView hotspots={hotspots} status={status} error={hotspotsError} repositoryUrl={analyzedRepositoryUrl} analysisId={analysisId} onSelectPath={(path) => { setSelectedFilePath(path); navigate('files') }} />}
+        {activeView === 'hotspots' && (
+          <HotspotsView
+            hotspots={hotspots}
+            status={status}
+            error={hotspotsError}
+            repositoryUrl={analyzedRepositoryUrl}
+            analysisId={analysisId}
+            onSelectPath={(path) => {
+              setSelectedFilePath(path)
+              navigate('files')
+            }}
+          />
+        )}
         {activeView === 'files' && <FileDetailView detail={fileDetail} path={selectedFilePath} files={fileInsights} status={status} busy={fileDetailBusy || resultsBusy} error={fileDetailError} catalogError={filesError} onSelectPath={setSelectedFilePath} />}
         {activeView === 'quality' && <QualityGateView summary={summary} projectId={projects.find((project) => project.repository_url === analyzedRepositoryUrl)?.project_id ?? null} onNavigate={navigate} />}
       </main>
@@ -704,7 +716,19 @@ function OverviewView({
   )
 }
 
-function HistoryView({ items, busy, error, onSelectRun, onDelete }: { items: AnalysisHistoryItem[]; busy: boolean; error: string | null; onSelectRun: (run: AnalysisHistoryItem) => void; onDelete: (analysisIds: readonly string[]) => Promise<AnalysisDeletionResult> }) {
+function HistoryView({
+  items,
+  busy,
+  error,
+  onSelectRun,
+  onDelete,
+}: {
+  items: AnalysisHistoryItem[]
+  busy: boolean
+  error: string | null
+  onSelectRun: (run: AnalysisHistoryItem) => void
+  onDelete: (analysisIds: readonly string[]) => Promise<AnalysisDeletionResult>
+}) {
   const [selectedIds, setSelectedIds] = useState<Set<string>>(() => new Set())
   const [confirmationIds, setConfirmationIds] = useState<string[] | null>(null)
   const [deleteBusy, setDeleteBusy] = useState(false)
@@ -874,7 +898,15 @@ function HotspotsView({ hotspots, status, error, repositoryUrl, analysisId, onSe
               <tbody>
                 {orderedHotspots.map((hotspot) => (
                   <tr key={hotspot.path}>
-                    <td><button className="path-link" onClick={() => onSelectPath(hotspot.path)} type="button"><code>{hotspot.path}</code></button></td>
+                    <td>
+                      <button
+                        className="path-link"
+                        onClick={() => onSelectPath(hotspot.path)}
+                        type="button"
+                      >
+                        <code>{hotspot.path}</code>
+                      </button>
+                    </td>
                     <td>{hotspot.hotspot_score.toFixed(2)}</td>
                     <td>{hotspot.risk ? `${hotspot.risk.score.toFixed(2)} (${hotspotRisk(hotspot)})` : 'Unavailable'}</td>
                     <td>{formatHotspotComponents(hotspot)}</td>
@@ -961,7 +993,14 @@ function FileDetailView({ detail, path, files, status, busy, error, catalogError
     )
   }
   if (catalogError && files.length === 0 && !path) return <EmptyState title="File catalog unavailable" description={catalogError} />
-  if (!path && files.length === 0) return <EmptyState title="No file evidence" description="The completed analysis did not include file-level evidence." />
+  if (!path && files.length === 0) {
+    return (
+      <EmptyState
+        title="No file evidence"
+        description="The completed analysis did not include file-level evidence."
+      />
+    )
+  }
   if (busy) return <EmptyState title="Loading file detail" description={`Loading evidence for ${path}.`} />
   if (error || !detail) return <EmptyState title="File detail unavailable" description={error || 'No stored evidence exists for this file.'} />
   return (

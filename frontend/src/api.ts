@@ -191,8 +191,20 @@ export function saveQualityPolicy(
   )
 }
 
-export function importQualityProfile(projectId: string, xml: string): Promise<{ language: string; profile_name: string | null; mapped: number; unsupported: string[]; invalid: string[] }> {
-  return request(`/api/v1/projects/${encodeURIComponent(projectId)}/quality-profiles/import`, { method: 'POST', body: xml, headers: { 'Content-Type': 'application/xml' } })
+export function importQualityProfile(
+  projectId: string,
+  xml: string,
+): Promise<{
+  language: string
+  profile_name: string | null
+  mapped: number
+  unsupported: string[]
+  invalid: string[]
+}> {
+  return request(
+    `/api/v1/projects/${encodeURIComponent(projectId)}/quality-profiles/import`,
+    { method: 'POST', body: xml, headers: { 'Content-Type': 'application/xml' } },
+  )
 }
 
 export function getAnalysisFindings(id: string, init?: RequestInit): Promise<AnalysisFinding[]> {

@@ -1,4 +1,3 @@
-# ruff: noqa: E501
 """Project quality-gate policies and defensive SonarQube profile imports."""
 
 from __future__ import annotations

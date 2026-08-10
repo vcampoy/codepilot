@@ -316,7 +316,10 @@ describe('analysis history and quality KPI', () => {
       api_key_configured: true,
     })
     render(<App />)
-    fireEvent.submit(screen.getByRole('button', { name: 'Analyze repository' }).closest('form')!, { preventDefault: () => undefined })
+    fireEvent.submit(
+      screen.getByRole('button', { name: 'Analyze repository' }).closest('form')!,
+      { preventDefault: () => undefined },
+    )
     fireEvent.click(await screen.findByRole('button', { name: 'Quality gate' }))
     const model = await screen.findByLabelText('Model')
     expect(within(model).getByRole('option', { name: 'future-model' })).toBeInTheDocument()
@@ -459,10 +462,18 @@ describe('completed analysis result loading', () => {
     fixtures.getAnalysisFindings.mockResolvedValue([finding])
     fixtures.getAnalysisHotspots.mockResolvedValue([insight, secondInsight])
     fixtures.getAnalysisFiles.mockResolvedValue({ items: [insight, secondInsight], total: 2, limit: 100, offset: 0 })
-    fixtures.getAnalysisFileDetail.mockImplementation(async (_id: string, path: string) => ({ ...(path === insight.path ? insight : secondInsight), findings: path === insight.path ? [finding] : [] }))
+    fixtures.getAnalysisFileDetail.mockImplementation(
+      async (_id: string, path: string) => ({
+        ...(path === insight.path ? insight : secondInsight),
+        findings: path === insight.path ? [finding] : [],
+      }),
+    )
 
     render(<App />)
-    fireEvent.submit(screen.getByRole('button', { name: 'Analyze repository' }).closest('form')!, { preventDefault: () => undefined })
+    fireEvent.submit(
+      screen.getByRole('button', { name: 'Analyze repository' }).closest('form')!,
+      { preventDefault: () => undefined },
+    )
     fireEvent.click(await screen.findByRole('button', { name: 'Hotspots' }))
     await waitFor(() => expect(screen.getByText('Hotspots (2)')).toBeInTheDocument())
 
