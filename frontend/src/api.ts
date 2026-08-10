@@ -218,7 +218,12 @@ export function getAnalysisHotspots(id: string, limit = 20, init?: RequestInit):
   )
 }
 
-export function getAnalysisFiles(id: string, limit = 100, offset = 0, init?: RequestInit): Promise<AnalysisFilesResponse> {
+export function getAnalysisFiles(
+  id: string,
+  limit = 100,
+  offset = 0,
+  init?: RequestInit,
+): Promise<AnalysisFilesResponse> {
   return request<AnalysisFilesResponse>(
     `/api/v1/analyses/${encodeURIComponent(id)}/files?limit=${limit}&offset=${offset}`,
     init,

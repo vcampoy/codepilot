@@ -20,7 +20,10 @@ from codepilot.core.errors import (
 )
 from codepilot.core.logging import configure_logging
 from codepilot.core.middleware import CorrelationMiddleware
-from codepilot.core.observability import OpenTelemetryMiddleware, configure_error_reporting
+from codepilot.core.observability import (
+    OpenTelemetryMiddleware,
+    configure_error_reporting,
+)
 from codepilot.core.rate_limit import (
     RequestRateLimitMiddleware,
     SlidingWindowRateLimiter,

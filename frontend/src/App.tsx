@@ -36,7 +36,12 @@ import { createFindingsMarkdownExport, downloadMarkdownFile } from './findingsEx
 import { createHotspotsMarkdownExport, MAX_HOTSPOTS_EXPORT } from './hotspotsExport'
 import { TableFilterDialog } from './components/TableFilterDialog'
 import { ConfirmationDialog } from './components/ConfirmationDialog'
-import { formatHistoryDate, formatHistoryRisk, isHistoryActivationKey, totalHotspots } from './analysisHistoryPresentation'
+import {
+  formatHistoryDate,
+  formatHistoryRisk,
+  isHistoryActivationKey,
+  totalHotspots,
+} from './analysisHistoryPresentation'
 import {
   FINDING_COLUMNS,
   FINDING_SEVERITIES,
@@ -781,7 +786,149 @@ function HistoryView({
     }
   }
 
-  return <section className="page-grid"><div className="panel table-panel"><div className="panel-title"><span>Analysis history</span><div className="table-actions"><span className="muted">Latest first</span><button className="danger-button" disabled={selectedIds.size === 0 || deleteBusy} onClick={() => openDelete([...selectedIds])} type="button">Delete selected ({selectedIds.size})</button></div></div>{error && <p className="error-copy" role="alert">{error}</p>}{deleteError && <p className="error-copy" role="alert">{deleteError}</p>}{busy ? <EmptyState title="Loading history" description="Reading completed analyses." compact /> : items.length ? <div className="history-table-wrap"><table className="history-table"><caption className="sr-only">Completed repository analyses</caption><thead><tr><th className="history-select-cell" scope="col"><label><span className="sr-only">Select all analyses</span><input aria-label="Select all analyses" checked={selectionState.checked} ref={(element) => { if (element) element.indeterminate = selectionState.indeterminate }} onChange={(event) => setSelectedIds((current) => toggleAllHistorySelection(current, visibleIds, event.target.checked))} type="checkbox" /></label></th><th scope="col">Repository</th><th scope="col">Risk</th><th scope="col">Findings</th><th scope="col">Files</th><th scope="col">Duration</th><th scope="col">Date</th><th scope="col">Actions</th></tr></thead><tbody>{items.map((item) => <tr className="history-table-row" key={item.analysis_id} onClick={() => select(item)} onKeyDown={(event) => { if (isHistoryActivationKey(event.key)) { event.preventDefault(); select(item) } }} tabIndex={0}><td className="history-select-cell" onClick={(event) => event.stopPropagation()}><input aria-label={`Select analysis ${item.repository_name}`} checked={selectedIds.has(item.analysis_id)} onChange={() => setSelectedIds((current) => toggleHistorySelection(current, item.analysis_id))} type="checkbox" /></td><th scope="row"><a href="#overview" onClick={(event) => { event.preventDefault(); select(item) }}>{item.repository_name}</a><code>{item.analysis_id}</code></th><td>{formatHistoryRisk(item.risk_score, item.risk_category)}</td><td>{item.finding_count}</td><td>{item.analyzed_file_count}</td><td>{item.duration_seconds.toFixed(1)}s</td><td>{formatHistoryDate(item.created_at)}</td><td><button aria-label={`Delete analysis ${item.repository_name}`} className="danger-button" disabled={deleteBusy} type="button" onClick={(event) => { event.stopPropagation(); openDelete([item.analysis_id]) }}>Delete</button></td></tr>)}</tbody></table></div> : <EmptyState title="No analyses" description="Submit a repository to create your first completed analysis." compact />}</div><ConfirmationDialog busy={deleteBusy} confirmLabel={confirmationIds?.length === 1 ? 'Delete analysis' : 'Delete analyses'} onCancel={() => { if (!deleteBusy) setConfirmationIds(null) }} onConfirm={() => void confirmDelete()} open={confirmationIds !== null} title={confirmationIds?.length === 1 ? 'Delete analysis?' : 'Delete selected analyses?'}>{confirmationIds?.length === 1 ? 'This analysis and its stored evidence will be deleted. This cannot be undone.' : `This will permanently delete ${confirmationIds?.length ?? 0} analyses and their stored evidence. This cannot be undone.`}</ConfirmationDialog></section>
+  return (
+    <section className="page-grid">
+      <div className="panel table-panel">
+        <div className="panel-title">
+          <span>Analysis history</span>
+          <div className="table-actions">
+            <span className="muted">Latest first</span>
+            <button
+              className="danger-button"
+              disabled={selectedIds.size === 0 || deleteBusy}
+              onClick={() => openDelete([...selectedIds])}
+              type="button"
+            >
+              Delete selected ({selectedIds.size})
+            </button>
+          </div>
+        </div>
+        {error && <p className="error-copy" role="alert">{error}</p>}
+        {deleteError && <p className="error-copy" role="alert">{deleteError}</p>}
+        {busy ? (
+          <EmptyState title="Loading history" description="Reading completed analyses." compact />
+        ) : items.length ? (
+          <div className="history-table-wrap">
+            <table className="history-table">
+              <caption className="sr-only">Completed repository analyses</caption>
+              <thead>
+                <tr>
+                  <th className="history-select-cell" scope="col">
+                    <label>
+                      <span className="sr-only">Select all analyses</span>
+                      <input
+                        aria-label="Select all analyses"
+                        checked={selectionState.checked}
+                        ref={(element) => {
+                          if (element) element.indeterminate = selectionState.indeterminate
+                        }}
+                        onChange={(event) =>
+                          setSelectedIds((current) =>
+                            toggleAllHistorySelection(current, visibleIds, event.target.checked),
+                          )
+                        }
+                        type="checkbox"
+                      />
+                    </label>
+                  </th>
+                  <th scope="col">Repository</th>
+                  <th scope="col">Risk</th>
+                  <th scope="col">Findings</th>
+                  <th scope="col">Files</th>
+                  <th scope="col">Duration</th>
+                  <th scope="col">Date</th>
+                  <th scope="col">Actions</th>
+                </tr>
+              </thead>
+              <tbody>
+                {items.map((item) => (
+                  <tr
+                    className="history-table-row"
+                    key={item.analysis_id}
+                    onClick={() => select(item)}
+                    onKeyDown={(event) => {
+                      if (isHistoryActivationKey(event.key)) {
+                        event.preventDefault()
+                        select(item)
+                      }
+                    }}
+                    tabIndex={0}
+                  >
+                    <td
+                      className="history-select-cell"
+                      onClick={(event) => event.stopPropagation()}
+                    >
+                      <input
+                        aria-label={`Select analysis ${item.repository_name}`}
+                        checked={selectedIds.has(item.analysis_id)}
+                        onChange={() =>
+                          setSelectedIds((current) =>
+                            toggleHistorySelection(current, item.analysis_id),
+                          )
+                        }
+                        type="checkbox"
+                      />
+                    </td>
+                    <th scope="row">
+                      <a
+                        href="#overview"
+                        onClick={(event) => {
+                          event.preventDefault()
+                          select(item)
+                        }}
+                      >
+                        {item.repository_name}
+                      </a>
+                      <code>{item.analysis_id}</code>
+                    </th>
+                    <td>{formatHistoryRisk(item.risk_score, item.risk_category)}</td>
+                    <td>{item.finding_count}</td>
+                    <td>{item.analyzed_file_count}</td>
+                    <td>{item.duration_seconds.toFixed(1)}s</td>
+                    <td>{formatHistoryDate(item.created_at)}</td>
+                    <td>
+                      <button
+                        aria-label={`Delete analysis ${item.repository_name}`}
+                        className="danger-button"
+                        disabled={deleteBusy}
+                        type="button"
+                        onClick={(event) => {
+                          event.stopPropagation()
+                          openDelete([item.analysis_id])
+                        }}
+                      >
+                        Delete
+                      </button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        ) : (
+          <EmptyState
+            title="No analyses"
+            description="Submit a repository to create your first completed analysis."
+            compact
+          />
+        )}
+      </div>
+      <ConfirmationDialog
+        busy={deleteBusy}
+        confirmLabel={confirmationIds?.length === 1 ? 'Delete analysis' : 'Delete analyses'}
+        onCancel={() => {
+          if (!deleteBusy) setConfirmationIds(null)
+        }}
+        onConfirm={() => void confirmDelete()}
+        open={confirmationIds !== null}
+        title={confirmationIds?.length === 1 ? 'Delete analysis?' : 'Delete selected analyses?'}
+      >
+        {confirmationIds?.length === 1
+          ? 'This analysis and its stored evidence will be deleted. This cannot be undone.'
+          : `This will permanently delete ${confirmationIds?.length ?? 0} analyses and their stored evidence. This cannot be undone.`}
+      </ConfirmationDialog>
+    </section>
+  )
 }
 
 function HotspotsView({ hotspots, status, error, repositoryUrl, analysisId, onSelectPath }: { hotspots: FileInsight[]; status: AnalysisStatus | null; error: string | null; repositoryUrl: string | null; analysisId: string | null; onSelectPath: (path: string) => void }) {
@@ -901,7 +1048,9 @@ function HotspotsView({ hotspots, status, error, repositoryUrl, analysisId, onSe
                     <th aria-sort={sort.column === key ? (sort.direction === 'asc' ? 'ascending' : 'descending') : 'none'} key={key} scope="col">
                       <button
                         className="table-sort-button"
-                        onClick={() => setSort((current) => toggleHotspotSort(current, key as HotspotColumnKey))}
+                        onClick={() =>
+                          setSort((current) => toggleHotspotSort(current, key as HotspotColumnKey))
+                        }
                         type="button"
                       >
                         {label}
@@ -941,7 +1090,15 @@ function findingDisclosureKey(path: string, finding: AnalysisFinding, index: num
   return `${path}-${finding.analyzer}-${finding.rule_id}-${finding.start_line}-${finding.end_line}-${index}`
 }
 
-function FindingDetailCard({ finding, expanded, onToggle }: { finding: AnalysisFinding; expanded: boolean; onToggle: () => void }) {
+function FindingDetailCard({
+  finding,
+  expanded,
+  onToggle,
+}: {
+  finding: AnalysisFinding
+  expanded: boolean
+  onToggle: () => void
+}) {
   const sourceId = useId()
   const summary = (
     <>
@@ -973,7 +1130,11 @@ function FindingDetailCard({ finding, expanded, onToggle }: { finding: AnalysisF
         <div className="availability-row">{summary}</div>
       )}
       {expanded && finding.source_context && (
-        <div className="source-context" id={sourceId} aria-label={`Source context for lines ${finding.start_line}-${finding.end_line}`}>
+        <div
+          className="source-context"
+          id={sourceId}
+          aria-label={`Source context for lines ${finding.start_line}-${finding.end_line}`}
+        >
           {finding.source_context.lines.map((line) => (
             <div
               className={`source-line ${

@@ -10,7 +10,7 @@ import shutil
 import signal
 import socket
 import stat
-import subprocess
+import subprocess  # nosec B404: required for the validated Git history boundary.
 import tempfile
 import time
 from collections.abc import AsyncIterator, Callable, Iterator, Sequence

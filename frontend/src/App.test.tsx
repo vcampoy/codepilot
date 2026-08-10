@@ -338,7 +338,10 @@ describe('analysis history and quality KPI', () => {
     configureCompletedRun()
     fixtures.getLlmConfiguration.mockRejectedValue(new Error('Models unavailable'))
     render(<App />)
-    fireEvent.submit(screen.getByRole('button', { name: 'Analyze repository' }).closest('form')!, { preventDefault: () => undefined })
+    fireEvent.submit(
+      screen.getByRole('button', { name: 'Analyze repository' }).closest('form')!,
+      { preventDefault: () => undefined },
+    )
     fireEvent.click(await screen.findByRole('button', { name: 'Quality gate' }))
     await waitFor(() => expect(screen.getByText('Models unavailable')).toBeInTheDocument())
     expect(screen.getByLabelText('Model')).toBeDisabled()
@@ -515,7 +518,10 @@ describe('completed analysis result loading', () => {
 
     render(<App />)
     fireEvent.change(screen.getByLabelText('Repository URL'), { target: { value: 'https://github.com/acme/demo' } })
-    fireEvent.submit(screen.getByRole('button', { name: 'Analyze repository' }).closest('form')!, { preventDefault: () => undefined })
+    fireEvent.submit(
+      screen.getByRole('button', { name: 'Analyze repository' }).closest('form')!,
+      { preventDefault: () => undefined },
+    )
     fireEvent.click(await screen.findByRole('button', { name: 'Hotspots' }))
     await waitFor(() => expect(screen.getByText('Hotspots (2)')).toBeInTheDocument())
     fireEvent.click(screen.getByRole('button', { name: 'Export hotspots (.md)' }))

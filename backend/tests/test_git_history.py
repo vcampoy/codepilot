@@ -10,7 +10,10 @@ from codepilot.analyzers.git_history import GitHistoryConfig, GitHistoryService
 
 
 def _git(repo: Path, *args: str) -> None:
-    subprocess.run(["git", *args], cwd=repo, check=True, capture_output=True, text=True)
+    # The helper is test-owned and receives only fixed Git arguments from isolated fixtures.
+    subprocess.run(  # nosec B603, B607
+        ["git", *args], cwd=repo, check=True, capture_output=True, text=True
+    )
 
 
 def _commit(repo: Path, message: str, author: str) -> None:

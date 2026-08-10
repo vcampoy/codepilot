@@ -90,7 +90,7 @@ class _LocalGitClient:
         if self._failure is not None:
             raise self._failure
         await asyncio.to_thread(
-            subprocess.run,
+            subprocess.run,  # nosec B603, B607
             ["git", "clone", "--depth", "1", "--no-tags", str(self._source_path), str(destination)],
             check=True,
             capture_output=True,
@@ -102,7 +102,7 @@ class _LocalGitClient:
     ) -> str:
         # The executable and arguments are test-owned constants for this local fixture.
         completed = await asyncio.to_thread(
-            subprocess.run,  # nosec B607
+            subprocess.run,  # nosec B603, B607
             ["git", "-C", str(repository_path), "rev-parse", "HEAD"],
             check=True,
             capture_output=True,
