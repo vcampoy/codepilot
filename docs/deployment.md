@@ -4,6 +4,8 @@
 
 `docker compose up --build` runs PostgreSQL, Redis, the migration job, API, Celery worker, Beat, and the static frontend. The migration service must complete before API and worker services start, and the frontend waits for the API healthcheck. Use `docker compose down` to stop the stack.
 
+Before saving an LLM credential from Setup, configure one stable `LLM_CONFIG_ENCRYPTION_KEY` in the deployment secret manager or the gitignored root `.env`. Generate it with `Fernet.generate_key()`; pass the same value to API and worker. Recreate both containers after changing the value. Rotating it without re-encrypting stored credentials makes those credentials unreadable.
+
 ## API and worker
 
 Build the backend image from `backend/`. Run the API with Uvicorn and the worker with Celery using the same environment values for PostgreSQL, Redis, repository limits, authentication, and optional integrations. Run `alembic upgrade head` before deploying a new application revision. The backend image uses a non-root `codepilot` user; Compose also drops Linux capabilities and enables `no-new-privileges` for application containers.

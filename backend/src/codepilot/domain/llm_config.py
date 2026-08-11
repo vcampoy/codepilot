@@ -20,6 +20,7 @@ class LlmConfiguration:
     model: str
     encrypted_api_key: str | None
     updated_at: datetime
+    available_models: tuple[str, ...] = ()
 
     @property
     def api_key_configured(self) -> bool:
@@ -34,3 +35,4 @@ class LlmConfigurationView:
     provider: str
     model: str
     api_key_configured: bool
+    available_models: tuple[str, ...] = ()

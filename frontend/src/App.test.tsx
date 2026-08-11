@@ -17,6 +17,14 @@ function deferred<T>(): Deferred<T> {
   return { promise, resolve, reject }
 }
 
+const LLM_PROVIDERS = vi.hoisted(() => [
+  { id: 'openai', label: 'OpenAI' }, { id: 'anthropic', label: 'Anthropic' },
+  { id: 'openrouter', label: 'OpenRouter' }, { id: 'google', label: 'Google' },
+  { id: 'kimi', label: 'Kimi' }, { id: 'grok', label: 'Grok' },
+  { id: 'minimax', label: 'MiniMax' }, { id: 'nvidia', label: 'NVIDIA' },
+  { id: 'deepseek', label: 'DeepSeek' },
+] as const)
+
 const fixtures = vi.hoisted(() => ({
   createAnalysis: vi.fn(),
   getAnalysisStatus: vi.fn(),
@@ -33,6 +41,7 @@ const fixtures = vi.hoisted(() => ({
   saveQualityPolicy: vi.fn(),
   importQualityProfile: vi.fn(),
   getLlmConfiguration: vi.fn(),
+  getLlmProviders: vi.fn(),
   saveLlmConfiguration: vi.fn(),
   requestEnrichment: vi.fn(),
   downloadMarkdownFile: vi.fn(),
@@ -194,6 +203,7 @@ beforeEach(() => {
   fixtures.getProjects.mockResolvedValue(emptyProjectCatalog)
   fixtures.getAnalysisHistory.mockResolvedValue({ items: [], total: 0, limit: 20, offset: 0 })
   fixtures.getLlmConfiguration.mockResolvedValue(DEFAULT_LLM_CONFIGURATION)
+  fixtures.getLlmProviders.mockResolvedValue({ providers: LLM_PROVIDERS })
 })
 
 afterEach(() => cleanup())
@@ -398,71 +408,170 @@ describe('analysis history and quality KPI', () => {
     expect(screen.getByRole('checkbox', { name: 'Select analysis other' })).toBeChecked()
   })
 
-  it('keeps the model dropdown disabled until LLM configuration loads', async () => {
-    configureCompletedRun()
-    const pending = deferred<{ enabled: boolean; provider: string; model: string; api_key_configured: boolean }>()
-    fixtures.getLlmConfiguration.mockReturnValue(pending.promise)
+  it('opens Setup without an analysis and keeps LLM controls disabled until enabled', async () => {
+    fixtures.getLlmConfiguration.mockResolvedValue({ enabled: false, provider: 'openai', model: 'gpt-5-mini', api_key_configured: false })
     render(<App />)
-    fireEvent.submit(
-      screen.getByRole('button', { name: 'Analyze repository' }).closest('form')!,
-      { preventDefault: () => undefined },
-    )
-    fireEvent.click(await screen.findByRole('button', { name: 'Quality gate' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Setup' }))
+    expect(await screen.findByRole('heading', { name: 'Setup' })).toBeInTheDocument()
+    const provider = await screen.findByLabelText('Provider')
     const model = screen.getByLabelText('Model')
+    const apiKey = screen.getByLabelText('API key')
+    const providerField = provider.closest('.form-field')
+    const modelField = model.closest('.form-field')
+    const apiKeyField = apiKey.closest('.form-field')
+    expect(providerField).toHaveClass('form-field')
+    expect(modelField).toHaveClass('form-field')
+    expect(providerField?.parentElement).toHaveClass('setup-fields')
+    expect(modelField?.parentElement).toBe(providerField?.parentElement)
+    expect(apiKeyField).toHaveClass('form-field-wide')
+    expect(screen.getByLabelText('Enable LLM enrichment').closest('label')).toHaveClass('form-checkbox')
+    expect(screen.getByRole('button', { name: 'Save LLM configuration' }).closest('.form-actions')).toContainElement(
+      screen.getByRole('button', { name: 'Save LLM configuration' }),
+    )
+    expect(apiKey).toHaveAttribute('placeholder', '')
+    expect(screen.queryByPlaceholderText('Stored key (leave blank to keep)')).not.toBeInTheDocument()
+    expect(provider).toBeDisabled()
+    expect(apiKey).toBeDisabled()
+    fireEvent.click(screen.getByLabelText('Enable LLM enrichment'))
+    expect(provider).toBeEnabled()
+    expect(screen.getByLabelText('API key')).toBeEnabled()
     expect(model).toBeDisabled()
-    pending.resolve({ enabled: true, provider: 'openai', model: 'gpt-4o-mini', api_key_configured: true })
-    await waitFor(() => expect(model).toBeEnabled())
-    expect(within(model).getByRole('option', { name: 'gpt-4o' })).toBeInTheDocument()
   })
 
-  it('preserves an unknown persisted model in the dropdown and saves the selected model', async () => {
-    configureCompletedRun()
+  it('updates and saves the enabled Setup configuration', async () => {
     fixtures.getLlmConfiguration.mockResolvedValue({
       enabled: true,
       provider: 'openai',
-      model: 'future-model',
+      model: 'gpt-4o-mini',
       api_key_configured: true,
+      available_models: ['gpt-4o-mini', 'gpt-4o'],
     })
     fixtures.saveLlmConfiguration.mockResolvedValue({
       enabled: true,
       provider: 'openai',
       model: 'gpt-4o',
       api_key_configured: true,
+      available_models: ['gpt-4o-mini', 'gpt-4o'],
     })
     render(<App />)
-    fireEvent.submit(
-      screen.getByRole('button', { name: 'Analyze repository' }).closest('form')!,
-      { preventDefault: () => undefined },
-    )
-    fireEvent.click(await screen.findByRole('button', { name: 'Quality gate' }))
-    const model = await screen.findByLabelText('Model')
-    expect(within(model).getByRole('option', { name: 'future-model' })).toBeInTheDocument()
-    fireEvent.change(model, { target: { value: 'gpt-4o' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Setup' }))
+
+    const provider = await screen.findByLabelText('Provider')
+    const model = screen.getByLabelText('Model')
+    const apiKey = screen.getByLabelText('API key')
+    expect(screen.getByPlaceholderText('Stored key (leave blank to keep)')).toBe(apiKey)
+    expect(within(model).getByRole('option', { name: 'gpt-4o' })).toBeInTheDocument()
+
+    fireEvent.change(apiKey, { target: { value: 'secret' } })
+    fireEvent.change(provider, { target: { value: 'anthropic' } })
+    expect(model).toBeDisabled()
+    expect(apiKey).toHaveValue('')
+    fixtures.saveLlmConfiguration.mockClear()
     fireEvent.click(screen.getByRole('button', { name: 'Save LLM configuration' }))
-    await waitFor(() =>
-      expect(fixtures.saveLlmConfiguration).toHaveBeenCalledWith({
-        enabled: true,
-        provider: 'openai',
-        model: 'gpt-4o',
-      }),
-    )
+    await waitFor(() => expect(fixtures.saveLlmConfiguration).toHaveBeenCalledWith({ enabled: true, provider: 'anthropic' }))
+    fireEvent.change(provider, { target: { value: 'openai' } })
+    expect(model).toHaveValue('gpt-4o-mini')
+    fireEvent.change(model, { target: { value: 'gpt-4o' } })
+    fireEvent.change(apiKey, { target: { value: 'secret' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Save LLM configuration' }))
+
+    await waitFor(() => expect(fixtures.saveLlmConfiguration).toHaveBeenCalledWith({
+      enabled: true,
+      provider: 'openai',
+      model: 'gpt-4o',
+      api_key: 'secret',
+    }))
+    expect(await screen.findByRole('status')).toHaveTextContent('LLM configuration saved.')
   })
 
-  it('disables the model and save controls when LLM configuration fails to load', async () => {
-    configureCompletedRun()
-    fixtures.getLlmConfiguration.mockRejectedValue(new Error('Models unavailable'))
+  it('shows the saving state and clears the API key after saving', async () => {
+    const pending = deferred<{
+      enabled: boolean
+      provider: string
+      model: string
+      api_key_configured: boolean
+      available_models: string[]
+    }>()
+    fixtures.getLlmConfiguration.mockResolvedValue({
+      enabled: true,
+      provider: 'openai',
+      model: 'gpt-4o',
+      api_key_configured: false,
+      available_models: ['gpt-4o'],
+    })
+    fixtures.saveLlmConfiguration.mockReturnValue(pending.promise)
     render(<App />)
-    fireEvent.submit(
-      screen.getByRole('button', { name: 'Analyze repository' }).closest('form')!,
-      { preventDefault: () => undefined },
-    )
-    fireEvent.click(await screen.findByRole('button', { name: 'Quality gate' }))
-    await waitFor(() => expect(screen.getByText('Models unavailable')).toBeInTheDocument())
-    expect(screen.getByLabelText('Model')).toBeDisabled()
-    expect(screen.getByRole('button', { name: 'Save LLM configuration' })).toBeDisabled()
+    fireEvent.click(screen.getByRole('button', { name: 'Setup' }))
+
+    const apiKey = await screen.findByLabelText('API key')
+    fireEvent.change(apiKey, { target: { value: 'secret' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Save LLM configuration' }))
+    expect(screen.getByRole('button', { name: 'Saving…' })).toBeDisabled()
+    pending.resolve({
+      enabled: true,
+      provider: 'openai',
+      model: 'gpt-4o',
+      api_key_configured: true,
+      available_models: ['gpt-4o'],
+    })
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Save LLM configuration' })).toBeEnabled())
+    expect(apiKey).toHaveValue('')
+  })
+
+  it('shows a fallback message when saving fails with a non-error value', async () => {
+    fixtures.getLlmConfiguration.mockResolvedValue({
+      enabled: true,
+      provider: 'openai',
+      model: 'gpt-4o',
+      api_key_configured: false,
+      available_models: ['gpt-4o'],
+    })
+    fixtures.saveLlmConfiguration.mockRejectedValue('Save failed')
+    render(<App />)
+    fireEvent.click(screen.getByRole('button', { name: 'Setup' }))
+    await screen.findByLabelText('API key')
+    fireEvent.click(screen.getByRole('button', { name: 'Save LLM configuration' }))
+
+    await waitFor(() => expect(screen.getByRole('status')).toHaveTextContent('Unable to save LLM configuration.'))
+  })
+
+  it('shows a load error when Setup configuration cannot be fetched', async () => {
+    fixtures.getLlmConfiguration.mockRejectedValue('Configuration unavailable')
+    render(<App />)
+    fireEvent.click(screen.getByRole('button', { name: 'Setup' }))
+
+    await waitFor(() => expect(screen.getByRole('status')).toHaveTextContent('Unable to load LLM configuration.'))
+  })
+
+  it('keeps Setup controls at safe defaults while configuration is loading', async () => {
+    const configuration = deferred<{
+      enabled: boolean
+      provider: string
+      model: string
+      api_key_configured: boolean
+      available_models: string[]
+    }>()
+    const providers = deferred<{ providers: readonly { id: string; label: string }[] }>()
+    fixtures.getLlmConfiguration.mockReturnValue(configuration.promise)
+    fixtures.getLlmProviders.mockReturnValue(providers.promise)
+    render(<App />)
+    fireEvent.click(screen.getByRole('button', { name: 'Setup' }))
+
+    const provider = await screen.findByLabelText('Provider')
+    expect(provider).toBeDisabled()
+    expect(screen.getByLabelText('API key')).toHaveValue('')
+
+    configuration.resolve({
+      enabled: true,
+      provider: 'openai',
+      model: 'gpt-4o',
+      api_key_configured: false,
+      available_models: ['gpt-4o'],
+    })
+    providers.resolve({ providers: LLM_PROVIDERS })
+    await waitFor(() => expect(provider).toBeEnabled())
   })
 })
-
 describe('completed analysis result loading', () => {
   it('filters findings by severity and type', async () => {
     configureCompletedRun()

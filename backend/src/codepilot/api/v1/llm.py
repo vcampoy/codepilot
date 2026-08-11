@@ -11,6 +11,7 @@ from codepilot.core.auth import authenticate
 from codepilot.core.errors import ApplicationError
 from codepilot.domain.llm_config import LlmConfigurationView
 from codepilot.services.llm_configuration import LlmConfigurationService
+from codepilot.services.llm_providers import provider_catalog
 
 router = APIRouter(prefix="/settings/llm", tags=["llm"])
 
@@ -18,7 +19,7 @@ router = APIRouter(prefix="/settings/llm", tags=["llm"])
 class LlmConfigurationPayload(BaseModel):
     enabled: bool = False
     provider: str = Field(default="openai", min_length=1, max_length=128)
-    model: str = Field(default="gpt-4o-mini", min_length=1, max_length=256)
+    model: str | None = Field(default=None, max_length=256)
     # Omitted means preserve the current key; an empty value explicitly removes it.
     api_key: str | None = Field(default=None, max_length=4096)
 
@@ -28,6 +29,7 @@ class LlmConfigurationResponse(BaseModel):
     provider: str
     model: str
     api_key_configured: bool
+    available_models: list[str]
 
 
 @router.get("", response_model=LlmConfigurationResponse)
@@ -35,6 +37,12 @@ async def get_llm_configuration(request: Request) -> LlmConfigurationResponse:
     identity = authenticate(request)
     service = _service(request)
     return _response(await service.get(identity.workspace_id))
+
+
+@router.get("/providers")
+async def get_llm_providers(request: Request) -> dict[str, list[dict[str, str]]]:
+    authenticate(request)
+    return {"providers": provider_catalog()}
 
 
 @router.put("", response_model=LlmConfigurationResponse)
@@ -70,4 +78,5 @@ def _response(value: LlmConfigurationView) -> LlmConfigurationResponse:
         provider=value.provider,
         model=value.model,
         api_key_configured=value.api_key_configured,
+        available_models=list(value.available_models),
     )

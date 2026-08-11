@@ -77,6 +77,7 @@ services:
       LLM_PROVIDER: ${LLM_PROVIDER:-}
       LLM_MODEL: ${LLM_MODEL:-}
       LLM_API_KEY: ${LLM_API_KEY:-}
+      LLM_CONFIG_ENCRYPTION_KEY: ${LLM_CONFIG_ENCRYPTION_KEY:-}
     ports:
       - "${API_PORT:-8000}:8000"
     healthcheck:
@@ -122,6 +123,7 @@ services:
       LLM_PROVIDER: ${LLM_PROVIDER:-}
       LLM_MODEL: ${LLM_MODEL:-}
       LLM_API_KEY: ${LLM_API_KEY:-}
+      LLM_CONFIG_ENCRYPTION_KEY: ${LLM_CONFIG_ENCRYPTION_KEY:-}
     depends_on:
       migration:
         condition: service_completed_successfully

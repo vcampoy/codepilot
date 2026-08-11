@@ -1,4 +1,4 @@
-﻿import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import type { FormEvent } from 'react'
 import { useId } from 'react'
 import {
@@ -17,6 +17,9 @@ import {
   getQualityPolicy,
   importQualityProfile,
   getLlmConfiguration,
+
+  getLlmProviders,
+
   saveLlmConfiguration,
   requestEnrichment,
   type AnalysisStatus,
@@ -31,7 +34,6 @@ import {
 } from './api'
 import { deleteAnalyses, type AnalysisDeletionResult } from './analysisDeletion'
 import { getSelectionState, toggleAllHistorySelection, toggleHistorySelection } from './analysisHistorySelection'
-import { getLlmModelOptions } from './llmModelOptions'
 import { createFindingsMarkdownExport, downloadMarkdownFile } from './findingsExport'
 import { createHotspotsMarkdownExport, MAX_HOTSPOTS_EXPORT } from './hotspotsExport'
 import { TableFilterDialog } from './components/TableFilterDialog'
@@ -69,7 +71,7 @@ import {
   type HotspotSort,
 } from './hotspotsPresentation'
 
-type View = 'repositories' | 'analyses' | 'overview' | 'findings' | 'hotspots' | 'files' | 'quality'
+type View = 'repositories' | 'analyses' | 'overview' | 'findings' | 'hotspots' | 'files' | 'quality' | 'setup'
 
 const views: { id: View; label: string; icon: string }[] = [
   { id: 'repositories', label: 'Repositories', icon: 'R' },
@@ -79,6 +81,9 @@ const views: { id: View; label: string; icon: string }[] = [
   { id: 'hotspots', label: 'Hotspots', icon: 'H' },
   { id: 'files', label: 'File detail', icon: 'D' },
   { id: 'quality', label: 'Quality gate', icon: 'Q' },
+
+  { id: 'setup', label: 'Setup', icon: 'S' },
+
 ]
 
 function viewFromHash(): View {
@@ -96,7 +101,9 @@ function AppliedFilterTags({ values }: { values: readonly string[] }) {
 }
 
 function canOpenWithoutAnalysis(view: View): boolean {
-  return view === 'repositories' || view === 'analyses'
+
+  return view === 'repositories' || view === 'analyses' || view === 'setup'
+
 }
 
 function activeViewFor(view: View, hasAnalysis: boolean): View {
@@ -355,7 +362,6 @@ function App() {
 
   const hasAnalysis = Boolean(analysisId)
   const activeView = useMemo(() => activeViewFor(view, hasAnalysis), [hasAnalysis, view])
-
   return (
     <div className="app-shell">
       <aside className="sidebar">
@@ -567,6 +573,54 @@ function WorkspaceView({
   )
 }
 
+function SetupView() {
+  const [config, setConfig] = useState<LlmConfiguration | null>(null)
+  const [providers, setProviders] = useState<{ id: string; label: string }[]>([])
+  const [enabled, setEnabled] = useState(false)
+  const [provider, setProvider] = useState('openai')
+  const [model, setModel] = useState('')
+  const [apiKey, setApiKey] = useState('')
+  const [message, setMessage] = useState<string | null>(null)
+  const [saving, setSaving] = useState(false)
+  useEffect(() => {
+    void Promise.all([getLlmConfiguration(), getLlmProviders()]).then(([value, catalog]) => {
+      setConfig(value); setEnabled(value.enabled); setProvider(value.provider); setModel(value.model); setProviders(catalog.providers)
+    }).catch((error: unknown) => setMessage(error instanceof Error ? error.message : 'Unable to load LLM configuration.'))
+  }, [])
+  const models = config?.provider === provider ? (config.available_models ?? []) : []
+  async function save() {
+    setSaving(true); setMessage(null)
+    try {
+      const value = await saveLlmConfiguration({ enabled, provider, model: model || undefined, api_key: apiKey || undefined })
+      setConfig(value); setModel(value.model); setApiKey(''); setMessage('LLM configuration saved.')
+    } catch (error) { setMessage(error instanceof Error ? error.message : 'Unable to save LLM configuration.') } finally { setSaving(false) }
+  }
+  return <section className="page-grid"><div className="panel setup-panel"><div className="panel-title"><span>Setup</span><span className="muted">Workspace configuration</span></div>
+    <form className="quality-policy-form setup-form" onSubmit={(event) => { event.preventDefault(); void save() }}>
+      <label className="form-checkbox" htmlFor="setup-enabled"><input checked={enabled} id="setup-enabled" onChange={(event) => setEnabled(event.target.checked)} type="checkbox" /> Enable LLM enrichment</label>
+      <fieldset className="setup-fieldset" disabled={!enabled}><legend>LLM enrichment</legend>
+        <div className="setup-fields">
+          <div className="form-field">
+            <label htmlFor="setup-provider">Provider</label>
+            <select id="setup-provider" value={provider} onChange={(event) => { setProvider(event.target.value); setModel(''); setApiKey('') }}>{providers.map((item) => <option key={item.id} value={item.id}>{item.label}</option>)}</select>
+          </div>
+          <div className="form-field">
+            <label htmlFor="setup-model">Model</label>
+            <select disabled={!models.length} id="setup-model" value={model} onChange={(event) => setModel(event.target.value)}>{models.map((item) => <option key={item} value={item}>{item}</option>)}</select>
+          </div>
+          <div className="form-field form-field-wide">
+            <label htmlFor="setup-api-key">API key</label>
+            <input id="setup-api-key" type="password" value={apiKey} onChange={(event) => setApiKey(event.target.value)} placeholder={config?.api_key_configured ? 'Stored key (leave blank to keep)' : ''} />
+          </div>
+        </div>
+      </fieldset>
+      <div className="form-actions">
+        <button className="setup-submit-button" disabled={saving} type="submit">{saving ? 'Saving…' : 'Save LLM configuration'}</button>
+        {message && <p className="muted form-message" role="status">{message}</p>}
+      </div>
+    </form></div></section>
+}
+
 function WorkspaceContent(props: WorkspaceViewProps) {
   switch (props.activeView) {
     case 'repositories':
@@ -662,6 +716,10 @@ function WorkspaceContent(props: WorkspaceViewProps) {
           onNavigate={props.navigate}
         />
       )
+
+    case 'setup':
+      return <SetupView />
+
   }
 }
 
@@ -900,7 +958,9 @@ function FindingsView({
                           >
                             <code>{findingLocation}</code>
                           </button>
+
                           <span>{finding.rule_id} · {finding.analyzer}</span>
+
                         </small>
                       </td>}
                       {visibleColumns.includes('severity') && (
@@ -944,12 +1004,16 @@ function OverviewView({
   const cards = [
     [
       'Risk score',
+
       risk ? `${risk.score.toFixed(2)} (${risk.category})` : '—',
+
       risk ? `Version ${risk.version}` : 'Risk model data unavailable',
     ],
-    ['Findings', severityTotal === null ? 'â€”' : String(severityTotal), 'From completed analyzer output'],
-    ['Files analyzed', summary ? String(summary.analyzed_file_count) : 'â€”', 'Repository evidence'],
-    ['Duration', summary ? `${summary.duration_seconds.toFixed(1)}s` : 'â€”', 'Worker execution time'],
+
+    ['Findings', severityTotal === null ? '—' : String(severityTotal), 'From completed analyzer output'],
+    ['Files analyzed', summary ? String(summary.analyzed_file_count) : '—', 'Repository evidence'],
+    ['Duration', summary ? `${summary.duration_seconds.toFixed(1)}s` : '—', 'Worker execution time'],
+
   ]
   const explain = async () => {
     if (!analysisId) return
@@ -1104,7 +1168,6 @@ function HistoryView({
       setDeleteBusy(false)
     }
   }
-
   return (
     <section className="page-grid">
       <div className="panel table-panel">
@@ -1456,14 +1519,15 @@ function FindingDetailCard({
         <strong>{finding.title || finding.rule_id}</strong><br />
         {finding.message}<br />
         <small>
+
           Lines {finding.start_line}-{finding.end_line} · {finding.analyzer}
           {finding.source_context ? ` · ${expanded ? 'Hide code' : 'View code'}` : ''}
+
         </small>
       </span>
       <span className={`severity-badge severity-${finding.severity}`}>{finding.severity}</span>
     </>
   )
-
   return (
     <article className="finding-detail">
       {finding.source_context ? (
@@ -1521,8 +1585,10 @@ function FileMetricGrid({ detail }: { detail: FileDetail }) {
       </article>
       <article className="metric-card">
         <span>Risk</span>
+
         <strong>{detail.risk ? detail.risk.score.toFixed(2) : '—'}</strong>
-        <small>{detail.risk ? `${detail.risk.category} · v${detail.risk.version}` : 'Unavailable'}</small>
+        <small>{detail.risk ? `${detail.risk.category} · v${detail.risk.version}` : '—'}</small>
+
       </article>
       <article className="metric-card">
         <span>Findings</span>
@@ -1648,98 +1714,6 @@ function FileDetailView({
   )
 }
 
-type LlmPanelProps = {
-  llm: LlmConfiguration | null
-  llmProvider: string
-  llmModel: string
-  llmModelOptions: string[]
-  llmKey: string
-  llmEnabled: boolean
-  llmLoadError: string | null
-  llmLoading: boolean
-  llmSaving: boolean
-  llmMessage: string | null
-  setLlmProvider: (value: string) => void
-  setLlmModel: (value: string) => void
-  setLlmModelOptions: (value: string[]) => void
-  setLlmKey: (value: string) => void
-  setLlmEnabled: (value: boolean) => void
-  saveLlm: () => void
-}
-
-function LlmPanel({
-  llm, llmProvider, llmModel, llmModelOptions, llmKey, llmEnabled,
-  llmLoadError, llmLoading, llmSaving, llmMessage,
-  setLlmProvider, setLlmModel, setLlmModelOptions, setLlmKey, setLlmEnabled, saveLlm,
-}: LlmPanelProps) {
-  return <div className="panel">
-    <div className="panel-title">
-    <span>LLM enrichment</span>
-    <span className="muted">Optional, evidence-bound</span>
-    </div>
-    <form className="quality-policy-form" onSubmit={(event) => { event.preventDefault(); void saveLlm() }}>
-    <label className="form-checkbox">
-    <input
-      type="checkbox"
-      checked={llmEnabled}
-      onChange={(event) => setLlmEnabled(event.target.checked)}
-    />
-    Enable configured LLM
-    </label>
-    <div className="form-grid">
-    <div className="form-field">
-    <label htmlFor="llm-provider">Provider</label>
-    <input
-      id="llm-provider"
-      value={llmProvider}
-      onChange={(event) => {
-        const provider = event.target.value
-        const options = getLlmModelOptions(provider, null)
-        setLlmProvider(provider)
-        setLlmModelOptions(options)
-        setLlmModel(options[0] ?? '')
-      }}
-    />
-    </div>
-    <div className="form-field">
-    <label htmlFor="llm-model">Model</label>
-    <select
-      aria-describedby={llmLoadError ? 'llm-model-error' : undefined}
-      disabled={llmLoading || llmSaving || llmModelOptions.length === 0}
-      id="llm-model"
-      onChange={(event) => setLlmModel(event.target.value)}
-      value={llmModel}
-    >
-    <option value="">{llmLoading ? 'Loading models…' : 'Select a model'}</option>
-    {llmModelOptions.map((model) => <option key={model} value={model}>{model}</option>)}
-    </select>
-    {llmLoadError && <small className="form-message" id="llm-model-error" role="alert">{llmLoadError}</small>}
-    </div>
-    <div className="form-field form-field-wide">
-    <label htmlFor="llm-api-key">API key {llm?.api_key_configured ? '(configured; leave blank to keep)' : ''}</label>
-    <input
-      id="llm-api-key"
-      type="password"
-      value={llmKey}
-      onChange={(event) => setLlmKey(event.target.value)}
-      autoComplete="off"
-    />
-    </div>
-    </div>
-    <div className="form-actions">
-    <button
-      className="secondary-button"
-      disabled={llmLoading || llmSaving || llmModelOptions.length === 0 || !llmModel}
-      type="submit"
-    >
-      {llmSaving ? 'Saving...' : 'Save LLM configuration'}
-    </button>
-    {llmMessage && <small className="form-message" role="status">{llmMessage}</small>}
-    </div>
-    </form>
-    </div>
-}
-
 function QualityGateFailureSummary({ gate }: { gate: any }) {
   if (gate.status === 'not_configured') {
     return (
@@ -1769,7 +1743,6 @@ function QualityGateFailureSummary({ gate }: { gate: any }) {
 
 function QualityGateContent(props: any) {
   const {
-    llmPanel,
     projectId,
     save,
     maxCritical,
@@ -1790,7 +1763,9 @@ function QualityGateContent(props: any) {
     showRisk,
     onNavigate,
   } = props
-  return <section className="page-grid">{llmPanel}<div className="panel">
+
+  return <section className="page-grid"><div className="panel">
+
     <div className="panel-title">
     <span>Quality gate</span>
     <span className={`status-badge status-${gate.status === 'failed' ? 'failed' : 'completed'}`}>
@@ -1863,7 +1838,9 @@ function QualityGateContent(props: any) {
     <article className="metric-card">
     <button className="table-sort-button" type="button" onClick={() => setShowRisk((value: boolean) => !value)}>
     <span>Risk score</span>
+
     <strong>{observed.risk_score === null ? '—' : observed.risk_score.toFixed(2)}</strong>
+
     </button>
     <small>Click for breakdown</small>
     </article>
@@ -1890,7 +1867,9 @@ function QualityGateContent(props: any) {
     {Object.entries(summary.risk_assessment.components).map(([name, value]) => (
       <div className="availability-row" key={name}>
         <span>{name}</span>
+
         <strong>{Number(value).toFixed(2)} × {Number(summary.risk_assessment?.weights[name] ?? 0).toFixed(2)}</strong>
+
       </div>
     ))}
     <p className="muted">Score is the weighted average of normalized repository evidence components.</p>
@@ -1929,34 +1908,7 @@ function QualityGateView({
   const [maxHotspots, setMaxHotspots] = useState(gate.thresholds.max_new_hotspots?.toString() ?? '')
   const [profiles, setProfiles] = useState(summary?.quality_policy?.profiles ?? [])
   const [importMessage, setImportMessage] = useState<string | null>(null)
-  const [llm, setLlm] = useState<LlmConfiguration | null>(null)
-  const [llmProvider, setLlmProvider] = useState('openai')
-  const [llmModel, setLlmModel] = useState('gpt-4o-mini')
-  const [llmModelOptions, setLlmModelOptions] = useState<string[]>([])
-  const [llmKey, setLlmKey] = useState('')
-  const [llmEnabled, setLlmEnabled] = useState(false)
-  const [llmMessage, setLlmMessage] = useState<string | null>(null)
-  const [llmLoading, setLlmLoading] = useState(true)
-  const [llmLoadError, setLlmLoadError] = useState<string | null>(null)
-  const [llmSaving, setLlmSaving] = useState(false)
-  useEffect(() => {
-    let cancelled = false
-    setLlmLoading(true)
-    setLlmLoadError(null)
-    void getLlmConfiguration().then((configuration) => {
-      if (cancelled) return
-      setLlm(configuration)
-      setLlmProvider(configuration.provider)
-      setLlmModel(configuration.model)
-      setLlmModelOptions(getLlmModelOptions(configuration.provider, configuration.model))
-      setLlmEnabled(configuration.enabled)
-    }).catch((loadError) => {
-      if (!cancelled) setLlmLoadError(loadError instanceof Error ? loadError.message : 'LLM models unavailable.')
-    }).finally(() => {
-      if (!cancelled) setLlmLoading(false)
-    })
-    return () => { cancelled = true }
-  }, [])
+
   useEffect(() => {
     if (!projectId) return
     void getQualityPolicy(projectId).then((policy) => {
@@ -2005,47 +1957,9 @@ function QualityGateView({
       setImportMessage(error instanceof Error ? error.message : 'Import failed.')
     }
   }
-  const saveLlm = async () => {
-    if (!llmModel) return
-    setLlmSaving(true)
-    try {
-      const configuration = await saveLlmConfiguration({
-        enabled: llmEnabled,
-        provider: llmProvider,
-        model: llmModel,
-        ...(llmKey ? { api_key: llmKey } : {}),
-      })
-      setLlm(configuration)
-      setLlmModelOptions(getLlmModelOptions(configuration.provider, configuration.model))
-      setLlmKey('')
-      setLlmMessage('Saved. The API key is never shown again.')
-    } catch (error) { setLlmMessage(error instanceof Error ? error.message : 'LLM configuration failed.') }
-    finally { setLlmSaving(false) }
-  }
   const hotspotCount = totalHotspots(summary.hotspot_count)
-  const llmPanel = (
-    <LlmPanel
-      llm={llm}
-      llmProvider={llmProvider}
-      llmModel={llmModel}
-      llmModelOptions={llmModelOptions}
-      llmKey={llmKey}
-      llmEnabled={llmEnabled}
-      llmLoadError={llmLoadError}
-      llmLoading={llmLoading}
-      llmSaving={llmSaving}
-      llmMessage={llmMessage}
-      setLlmProvider={setLlmProvider}
-      setLlmModel={setLlmModel}
-      setLlmModelOptions={setLlmModelOptions}
-      setLlmKey={setLlmKey}
-      setLlmEnabled={setLlmEnabled}
-      saveLlm={() => void saveLlm()}
-    />
-  )
   return (
     <QualityGateContent
-      llmPanel={llmPanel}
       projectId={projectId}
       save={save}
       maxCritical={maxCritical}

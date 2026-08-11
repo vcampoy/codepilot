@@ -99,13 +99,24 @@ For a backend started locally from `backend/`, Pydantic Settings reads an env fi
 | `ANALYSIS_TIMEOUT_SECONDS` | Analysis time limit | `300` |
 | `LLM_ENABLED` | Enables optional LLM enrichment | `false` |
 | `LLM_PROVIDER` / `LLM_MODEL` / `LLM_API_KEY` | LLM provider settings; API key is secret | unset |
+| `LLM_CONFIG_ENCRYPTION_KEY` | Stable Fernet key used to encrypt workspace LLM API keys; required in production and when saving Setup credentials | unset |
 | `AUTH_REQUIRED` / `AUTH_API_KEY` | Minimal public API-key authentication | `false` / unset |
 | `RATE_LIMIT_REQUESTS` / `RATE_LIMIT_WINDOW_SECONDS` | In-process public request limit | `120` / `60` |
 | `WORKSPACE_ANALYSIS_QUOTA` | Accepted analyses per workspace | `100` |
 | `GITHUB_ENABLED` / `GITHUB_APP_ID` | Optional GitHub App integration | `false` / unset |
 | `OBSERVABILITY_ENABLED` / `ERROR_REPORTING_DSN` | Optional traces and error reporting | `false` / unset |
 
-Production requires JSON logging, non-local service URLs, non-default database credentials, HTTPS-only non-wildcard CORS origins, API-key authentication, and complete LLM settings when LLM configuration is supplied. LLM enrichment and GitHub integration are disabled by default. See [`docs/deployment.md`](docs/deployment.md) and [`SECURITY.md`](SECURITY.md).
+Production requires JSON logging, non-local service URLs, non-default database credentials, HTTPS-only non-wildcard CORS origins, API-key authentication, a valid stable `LLM_CONFIG_ENCRYPTION_KEY`, and complete LLM settings when LLM configuration is supplied. LLM enrichment and GitHub integration are disabled by default. See [`docs/deployment.md`](docs/deployment.md) and [`SECURITY.md`](SECURITY.md).
+
+### LLM credential encryption
+
+Generate one Fernet key and store it in the gitignored root `.env` (or your deployment secret manager):
+
+```bash
+python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
+```
+
+Use the exact same stable value for the API and worker. After changing it, recreate both containers with `docker compose up -d --force-recreate api worker`. Do not rotate the key without re-encrypting stored credentials or entering them again; old encrypted values cannot be decrypted with a different key.
 
 ### Request errors
 

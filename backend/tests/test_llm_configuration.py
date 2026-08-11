@@ -13,15 +13,26 @@ from codepilot.repositories.analysis import InMemoryAnalysisRepository
 from codepilot.services.analysis import AnalysisService
 
 
-def _client(repository: InMemoryAnalysisRepository) -> TestClient:
+class FakeDiscovery:
+    async def discover(self, provider: str, api_key: str) -> list[str]:
+        return ["gpt-test"]
+
+
+def _client(
+    repository: InMemoryAnalysisRepository, *, with_encryption_key: bool = True
+) -> TestClient:
     service = AnalysisService(
         repository,
         cast(Any, object()),
         cast(Any, object()),
         cast(Any, object()),
     )
-    settings = Settings(llm_config_encryption_key=SecretStr(Fernet.generate_key().decode()))
-    return TestClient(create_app(settings, analysis_service=service))
+    settings = Settings(
+        llm_config_encryption_key=(
+            SecretStr(Fernet.generate_key().decode()) if with_encryption_key else None
+        )
+    )
+    return TestClient(create_app(settings, analysis_service=service, llm_discovery=FakeDiscovery()))
 
 
 def test_llm_configuration_never_returns_api_key_and_is_tenant_scoped() -> None:
@@ -44,6 +55,7 @@ def test_llm_configuration_never_returns_api_key_and_is_tenant_scoped() -> None:
         "provider": "openai",
         "model": "gpt-test",
         "api_key_configured": True,
+        "available_models": ["gpt-test"],
     }
     assert "sk-secret" not in saved.text
     assert hidden.json()["api_key_configured"] is False
@@ -60,3 +72,20 @@ def test_enabling_without_a_key_is_rejected() -> None:
         )
     assert response.status_code == 400
     assert "API key" in str(response.json())
+
+
+def test_saving_api_key_without_encryption_key_is_rejected() -> None:
+    with _client(InMemoryAnalysisRepository(), with_encryption_key=False) as client:
+        response = client.put(
+            "/api/v1/settings/llm",
+            json={
+                "enabled": True,
+                "provider": "openai",
+                "model": "gpt-test",
+                "api_key": "sk-secret",
+            },
+        )
+
+    assert response.status_code == 503
+    assert "LLM_CONFIG_ENCRYPTION_KEY" in response.text
+    assert "sk-secret" not in response.text

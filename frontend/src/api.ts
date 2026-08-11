@@ -152,7 +152,9 @@ export interface LlmConfiguration {
   provider: string
   model: string
   api_key_configured: boolean
+  available_models?: string[]
 }
+export interface LlmProvider { id: string; label: string }
 
 const configuredBaseUrl = import.meta.env.VITE_API_BASE_URL?.trim()
 const apiBaseUrl = (configuredBaseUrl || 'http://localhost:8000').replace(/\/+$/, '')
@@ -163,8 +165,8 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
     headers: { 'Content-Type': 'application/json', ...init?.headers },
   })
   if (!response.ok) {
-    const payload = (await response.json().catch(() => null)) as { message?: string; detail?: string } | null
-    throw new Error(payload?.message || payload?.detail || `Request failed with HTTP ${response.status}.`)
+    const payload = (await response.json().catch(() => null)) as { message?: string; detail?: string; error?: { message?: string } } | null
+    throw new Error(payload?.error?.message || payload?.message || payload?.detail || `Request failed with HTTP ${response.status}.`)
   }
   if (response.status === 204) return undefined as T
   return (await response.json()) as T
@@ -280,10 +282,14 @@ export function getLlmConfiguration(): Promise<LlmConfiguration> {
   return request<LlmConfiguration>('/api/v1/settings/llm')
 }
 
+export function getLlmProviders(): Promise<{ providers: LlmProvider[] }> {
+  return request<{ providers: LlmProvider[] }>('/api/v1/settings/llm/providers')
+}
+
 export function saveLlmConfiguration(payload: {
   enabled: boolean
   provider: string
-  model: string
+  model?: string
   api_key?: string
 }): Promise<LlmConfiguration> {
   return request<LlmConfiguration>('/api/v1/settings/llm', { method: 'PUT', body: JSON.stringify(payload) })

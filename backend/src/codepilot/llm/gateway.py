@@ -65,6 +65,8 @@ class LiteLlmGateway:
         model: str,
         api_key: str | None,
         provider: str = "litellm",
+        metadata_provider: str | None = None,
+        base_url: str | None = None,
         fallback_models: Sequence[str] = (),
         models_by_task: Mapping[EnrichmentTask, Sequence[str]] | None = None,
         timeout_seconds: float = 30,
@@ -74,11 +76,15 @@ class LiteLlmGateway:
         completion: Completion | None = None,
         metrics_sink: InMemoryLlmMetricsSink | None = None,
     ) -> None:
-        self._model = model
+        self._model = _route_model(provider, model)
         self._api_key = api_key
-        self._provider = provider
-        self._models = tuple(dict.fromkeys((model, *fallback_models)))
-        self._models_by_task = models_by_task or {}
+        self._provider = metadata_provider or provider
+        self._base_url = base_url
+        self._models = _route_models(provider, self._model, fallback_models)
+        self._models_by_task = {
+            task: tuple(_route_model(provider, item) for item in models)
+            for task, models in (models_by_task or {}).items()
+        }
         self._timeout_seconds = timeout_seconds
         self._max_tokens = max_tokens
         self._max_retries = max_retries
@@ -136,6 +142,8 @@ class LiteLlmGateway:
         }
         if self._api_key:
             kwargs["api_key"] = self._api_key
+        if self._base_url:
+            kwargs["api_base"] = self._base_url
         raw = await self._completion(**kwargs)
         return _normalize_completion(raw, request.model, self._provider)
 
@@ -221,6 +229,16 @@ class LiteLlmGateway:
         return cast(Completion, litellm.acompletion)
 
 
+def _route_model(provider: str, model: str) -> str:
+    if provider == "litellm" or model.startswith(f"{provider}/"):
+        return model
+    return f"{provider}/{model}"
+
+
+def _route_models(provider: str, model: str, fallbacks: Sequence[str]) -> tuple[str, ...]:
+    return tuple(dict.fromkeys((model, *(_route_model(provider, item) for item in fallbacks))))
+
+
 def _output_model(task: EnrichmentTask) -> type[BaseModel]:
     return cast(
         type[BaseModel],
@@ -273,12 +291,24 @@ def _raw_field(value: Any, name: str) -> Any:
 def _normalize_usage(raw: Any) -> LlmUsage:
     if raw is None:
         return LlmUsage()
-    getter = raw.get if isinstance(raw, dict) else lambda key, default=0: getattr(raw, key, default)
     return LlmUsage(
-        input_tokens=int(getter("prompt_tokens", 0) or 0),
-        output_tokens=int(getter("completion_tokens", 0) or 0),
-        cost_usd=(float(getter("cost", 0)) if getter("cost", None) is not None else None),
+        input_tokens=_usage_int(raw, "prompt_tokens"),
+        output_tokens=_usage_int(raw, "completion_tokens"),
+        cost_usd=_usage_cost(raw),
     )
+
+
+def _usage_value(raw: Any, key: str, default: Any = 0) -> Any:
+    return raw.get(key, default) if isinstance(raw, dict) else getattr(raw, key, default)
+
+
+def _usage_int(raw: Any, key: str) -> int:
+    return int(_usage_value(raw, key) or 0)
+
+
+def _usage_cost(raw: Any) -> float | None:
+    value = _usage_value(raw, "cost", None)
+    return float(value) if value is not None else None
 
 
 def _is_retryable(error: Exception) -> bool:

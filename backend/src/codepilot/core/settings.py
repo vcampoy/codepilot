@@ -4,6 +4,7 @@ from functools import lru_cache
 from typing import Annotated, Any
 from urllib.parse import urlsplit
 
+from cryptography.fernet import Fernet
 from pydantic import Field, SecretStr, field_validator, model_validator
 from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 
@@ -97,6 +98,17 @@ class Settings(BaseSettings):
             return [origin.strip() for origin in value.split(",") if origin.strip()]
         return value
 
+    @field_validator("llm_config_encryption_key")
+    @classmethod
+    def validate_llm_config_encryption_key(cls, value: SecretStr | None) -> SecretStr | None:
+        if value is None:
+            return None
+        try:
+            Fernet(value.get_secret_value().encode())
+        except (TypeError, ValueError) as error:
+            raise ValueError("llm_config_encryption_key must be a valid Fernet key") from error
+        return value
+
     @model_validator(mode="after")
     def validate_production_configuration(self) -> "Settings":
         if self.environment != "production":
@@ -163,12 +175,15 @@ class Settings(BaseSettings):
         return ()
 
     def _production_llm_errors(self) -> tuple[str, ...]:
+        errors: list[str] = []
+        if not self.llm_config_encryption_key_value():
+            errors.append("llm_config_encryption_key is required in production")
         llm_values = (self.llm_provider, self.llm_model, self.llm_api_key_value())
         if (self.llm_enabled or any(llm_values)) and not all(llm_values):
-            return (
+            errors.append(
                 "llm_provider, llm_model, and llm_api_key must be complete and enabled together",
             )
-        return ()
+        return tuple(errors)
 
     def _production_github_errors(self) -> tuple[str, ...]:
         github_values = (

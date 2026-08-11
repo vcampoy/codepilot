@@ -1,10 +1,26 @@
 import json
+from typing import Any
 
 import pytest
+from cryptography.fernet import Fernet
 from pydantic import SecretStr, ValidationError
 
 from codepilot.core.settings import Settings
 from codepilot.worker.celery_app import create_celery_app
+
+
+def _safe_production_settings() -> dict[str, Any]:
+    return {
+        "environment": "production",
+        "database_url": "postgresql+asyncpg://app:strong-password@db:5432/app",
+        "redis_url": "rediss://redis.internal:6380/0",
+        "celery_broker_url": "rediss://redis.internal:6380/0",
+        "celery_result_backend": "rediss://redis.internal:6380/1",
+        "log_format": "json",
+        "cors_origins": ["https://app.example.com"],
+        "auth_required": True,
+        "auth_api_key": SecretStr("auth-secret"),
+    }
 
 
 def test_settings_parse_environment_and_redact_secrets(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -40,6 +56,25 @@ def test_settings_parse_llm_fallbacks_and_budgets(monkeypatch: pytest.MonkeyPatc
     assert settings.llm_fallback_models == ["provider/backup-a", "provider/backup-b"]
     assert settings.llm_timeout_seconds == 45
     assert settings.llm_max_tokens == 900
+
+
+def test_settings_rejects_invalid_llm_config_encryption_key() -> None:
+    with pytest.raises(ValidationError, match="llm_config_encryption_key"):
+        Settings(llm_config_encryption_key=SecretStr("not-a-fernet-key"))
+
+
+def test_production_requires_llm_config_encryption_key_for_runtime_setup() -> None:
+    with pytest.raises(ValidationError, match="llm_config_encryption_key"):
+        Settings(**_safe_production_settings())
+
+
+def test_production_accepts_valid_llm_config_encryption_key() -> None:
+    settings = Settings(
+        **_safe_production_settings(),
+        llm_config_encryption_key=SecretStr(Fernet.generate_key().decode()),
+    )
+
+    assert settings.environment == "production"
 
 
 def test_production_requires_github_app_credentials_when_enabled() -> None:

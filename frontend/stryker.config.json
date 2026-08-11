@@ -9,7 +9,7 @@
     "src/analysisHistoryPresentation.ts",
     "src/analysisHistorySelection.ts",
     "src/analysisDeletion.ts",
-    "src/llmModelOptions.ts"
+    "src/App.tsx"
   ],
   "coverageAnalysis": "perTest",
   "reporters": [
