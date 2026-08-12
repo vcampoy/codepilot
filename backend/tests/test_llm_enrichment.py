@@ -145,6 +145,37 @@ def test_adapter_validates_structured_output_and_records_usage() -> None:
     assert sink.events[0].cost_usd == 0.01
 
 
+def test_adapter_sends_reasoning_effort_only_when_selected() -> None:
+    calls: list[dict[str, object]] = []
+
+    async def complete(**kwargs: object) -> ProviderCompletion:
+        calls.append(kwargs)
+        return ProviderCompletion(
+            content=ExplanationOutput(
+                summary="Complexity drives the risk.",
+                why_it_matters="The file is harder to change safely.",
+                citations=["F-001", "score:complexity"],
+            ).model_dump_json(),
+            model="test-model",
+            provider="test",
+        )
+
+    asyncio.run(
+        LiteLlmGateway(
+            model="test-model", api_key="test-key", completion=complete, reasoning_effort="high"
+        ).enrich(EnrichmentTask.FILE_RISK, evidence())
+    )
+    assert calls[0]["reasoning_effort"] == "high"
+
+    calls.clear()
+    asyncio.run(
+        LiteLlmGateway(model="test-model", api_key="test-key", completion=complete).enrich(
+            EnrichmentTask.FILE_RISK, evidence()
+        )
+    )
+    assert "reasoning_effort" not in calls[0]
+
+
 def test_adapter_retries_transient_failure_then_uses_fallback_model() -> None:
     calls: list[str] = []
 
@@ -177,6 +208,40 @@ def test_adapter_retries_transient_failure_then_uses_fallback_model() -> None:
 
     assert result.model == "fallback"
     assert calls == ["primary", "primary", "fallback"]
+
+
+def test_adapter_does_not_send_primary_reasoning_effort_to_fallback() -> None:
+    calls: list[dict[str, object]] = []
+
+    async def complete(**kwargs: object) -> ProviderCompletion:
+        calls.append(kwargs)
+        if kwargs["model"] == "test/primary":
+            raise TimeoutError("provider timeout")
+        return ProviderCompletion(
+            content=json.dumps(
+                {
+                    "summary": "Prioritize the high-risk file.",
+                    "why_it_matters": "It has the strongest deterministic signal.",
+                    "citations": ["F-001"],
+                }
+            ),
+            model="test/fallback",
+            provider="test",
+        )
+
+    asyncio.run(
+        LiteLlmGateway(
+            model="primary",
+            provider="test",
+            fallback_models=["fallback"],
+            api_key="test-key",
+            completion=complete,
+            max_retries=0,
+            reasoning_effort="high",
+        ).enrich(EnrichmentTask.FILE_RISK, evidence())
+    )
+    assert calls[0]["reasoning_effort"] == "high"
+    assert "reasoning_effort" not in calls[1]
 
 
 def test_adapter_rejects_citations_not_present_in_evidence() -> None:

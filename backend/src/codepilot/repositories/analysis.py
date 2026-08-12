@@ -716,6 +716,7 @@ _LLM_CONFIGURATIONS = Table(
     Column("provider", String(128), nullable=False),
     Column("model", String(256), nullable=False),
     Column("available_models", JSON, nullable=False, default=[]),
+    Column("reasoning_effort", String(32), nullable=True),
     Column("encrypted_api_key", Text),
     Column("updated_at", DateTime(timezone=True), nullable=False),
 )
@@ -817,6 +818,7 @@ class PostgresAnalysisRepository:
                     provider=configuration.provider,
                     model=configuration.model,
                     available_models=list(configuration.available_models),
+                    reasoning_effort=configuration.reasoning_effort,
                     encrypted_api_key=configuration.encrypted_api_key,
                     updated_at=configuration.updated_at,
                 )
@@ -827,6 +829,7 @@ class PostgresAnalysisRepository:
                         "provider": configuration.provider,
                         "model": configuration.model,
                         "available_models": list(configuration.available_models),
+                        "reasoning_effort": configuration.reasoning_effort,
                         "encrypted_api_key": configuration.encrypted_api_key,
                         "updated_at": configuration.updated_at,
                     },
@@ -1837,4 +1840,5 @@ def _llm_configuration_from_row(value: Any) -> LlmConfiguration:
         encrypted_api_key=value.get("encrypted_api_key"),
         updated_at=value["updated_at"],
         available_models=tuple(value.get("available_models") or [str(value["model"])]),
+        reasoning_effort=value.get("reasoning_effort"),
     )

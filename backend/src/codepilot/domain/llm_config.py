@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Final
 
@@ -21,6 +21,7 @@ class LlmConfiguration:
     encrypted_api_key: str | None
     updated_at: datetime
     available_models: tuple[str, ...] = ()
+    reasoning_effort: str | None = None
 
     @property
     def api_key_configured(self) -> bool:
@@ -36,3 +37,5 @@ class LlmConfigurationView:
     model: str
     api_key_configured: bool
     available_models: tuple[str, ...] = ()
+    reasoning_effort: str | None = None
+    reasoning_efforts_by_model: dict[str, tuple[str, ...]] = field(default_factory=dict)

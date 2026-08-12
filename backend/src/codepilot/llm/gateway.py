@@ -7,6 +7,7 @@ import logging
 import time
 from collections.abc import Awaitable, Callable, Mapping, Sequence
 from dataclasses import dataclass
+from importlib import import_module
 from typing import Any, cast
 
 from pydantic import BaseModel
@@ -67,6 +68,7 @@ class LiteLlmGateway:
         provider: str = "litellm",
         metadata_provider: str | None = None,
         base_url: str | None = None,
+        reasoning_effort: str | None = None,
         fallback_models: Sequence[str] = (),
         models_by_task: Mapping[EnrichmentTask, Sequence[str]] | None = None,
         timeout_seconds: float = 30,
@@ -80,6 +82,7 @@ class LiteLlmGateway:
         self._api_key = api_key
         self._provider = metadata_provider or provider
         self._base_url = base_url
+        self._reasoning_effort = reasoning_effort
         self._models = _route_models(provider, self._model, fallback_models)
         self._models_by_task = {
             task: tuple(_route_model(provider, item) for item in models)
@@ -144,6 +147,8 @@ class LiteLlmGateway:
             kwargs["api_key"] = self._api_key
         if self._base_url:
             kwargs["api_base"] = self._base_url
+        if self._reasoning_effort and request.model == self._model:
+            kwargs["reasoning_effort"] = self._reasoning_effort
         raw = await self._completion(**kwargs)
         return _normalize_completion(raw, request.model, self._provider)
 
@@ -221,7 +226,7 @@ class LiteLlmGateway:
     @staticmethod
     def _load_completion() -> Completion:
         try:
-            import litellm  # type: ignore[import-not-found]
+            litellm = import_module("litellm")
         except ImportError as error:
             raise LlmProviderError(
                 "LiteLLM is not installed. Install the backend 'llm' extra to enable AI."

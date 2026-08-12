@@ -56,6 +56,8 @@ def test_llm_configuration_never_returns_api_key_and_is_tenant_scoped() -> None:
         "model": "gpt-test",
         "api_key_configured": True,
         "available_models": ["gpt-test"],
+        "reasoning_effort": None,
+        "reasoning_efforts_by_model": {"gpt-test": []},
     }
     assert "sk-secret" not in saved.text
     assert hidden.json()["api_key_configured"] is False

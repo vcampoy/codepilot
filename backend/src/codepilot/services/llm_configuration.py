@@ -15,6 +15,7 @@ from codepilot.domain.llm_config import (
 )
 from codepilot.llm.contracts import NoOpLlmGateway
 from codepilot.llm.gateway import LiteLlmGateway
+from codepilot.llm.reasoning_effort import ReasoningEffortResolver
 from codepilot.services.llm_enrichment import LlmGateway
 from codepilot.services.llm_providers import (
     PROVIDERS,
@@ -39,23 +40,35 @@ class LlmConfigurationService:
         repository: LlmConfigurationRepository,
         encryption_key: str | None,
         discovery: ProviderDiscovery | None = None,
+        reasoning_effort_resolver: ReasoningEffortResolver | None = None,
     ) -> None:
         self._repository = repository
         self._fernet = Fernet(encryption_key.encode()) if encryption_key else None
         self._discovery = discovery or HttpxProviderDiscovery()
+        self._reasoning_effort_resolver = reasoning_effort_resolver or ReasoningEffortResolver()
 
     async def get(self, workspace_id: str) -> LlmConfigurationView:
         configuration = await self._repository.get_llm_configuration(workspace_id)
         if configuration is None:
+            models: tuple[str, ...] = (DEFAULT_MODEL,)
             return LlmConfigurationView(
-                False, DEFAULT_PROVIDER, DEFAULT_MODEL, False, (DEFAULT_MODEL,)
+                False,
+                DEFAULT_PROVIDER,
+                DEFAULT_MODEL,
+                False,
+                models,
+                None,
+                await self._efforts(DEFAULT_PROVIDER, models),
             )
+        models = configuration.available_models or (configuration.model,)
         return LlmConfigurationView(
             configuration.enabled,
             configuration.provider,
             configuration.model,
             configuration.api_key_configured,
-            configuration.available_models or (configuration.model,),
+            models,
+            configuration.reasoning_effort,
+            await self._efforts(configuration.provider, models),
         )
 
     async def save(
@@ -66,6 +79,7 @@ class LlmConfigurationService:
         provider: str,
         model: str | None,
         api_key: str | None,
+        reasoning_effort: str | None = None,
     ) -> LlmConfigurationView:
         provider = _normalize_provider(provider)
         current = await self._repository.get_llm_configuration(workspace_id)
@@ -74,11 +88,32 @@ class LlmConfigurationService:
         selected, models = await self._resolve_model(
             enabled, provider, current, requested, encrypted
         )
+        allowed_efforts = await self._reasoning_effort_resolver.for_model(
+            _capability_model(provider, selected)
+        )
+        if reasoning_effort is not None and reasoning_effort not in allowed_efforts:
+            raise ValueError("reasoning effort is not supported by the selected model")
+        selected_effort = reasoning_effort if reasoning_effort in allowed_efforts else None
         saved = LlmConfiguration(
-            workspace_id, enabled, provider, selected, encrypted, datetime.now(UTC), tuple(models)
+            workspace_id,
+            enabled,
+            provider,
+            selected,
+            encrypted,
+            datetime.now(UTC),
+            tuple(models),
+            selected_effort,
         )
         await self._repository.save_llm_configuration(saved)
         return await self.get(workspace_id)
+
+    async def _efforts(self, provider: str, models: tuple[str, ...]) -> dict[str, tuple[str, ...]]:
+        return {
+            model: tuple(
+                await self._reasoning_effort_resolver.for_model(_capability_model(provider, model))
+            )
+            for model in models
+        }
 
     async def _resolve_model(
         self,
@@ -151,8 +186,13 @@ class LlmConfigurationService:
     def _gateway_for_configuration(
         self, configuration: LlmConfiguration | None
     ) -> LlmGateway | None:
-        if configuration is None or not configuration.enabled:
-            return None if configuration is None else NoOpLlmGateway()
+        if configuration is None:
+            return None
+        if not configuration.enabled:
+            return NoOpLlmGateway()
+        return self._enabled_gateway(configuration)
+
+    def _enabled_gateway(self, configuration: LlmConfiguration) -> LlmGateway:
         if self._fernet is None or not configuration.encrypted_api_key:
             return NoOpLlmGateway()
         prefix, base_url = _litellm_route(configuration.provider, configuration.model)
@@ -162,6 +202,7 @@ class LlmConfigurationService:
             model=configuration.model,
             api_key=self._decrypt(configuration.encrypted_api_key),
             base_url=base_url,
+            reasoning_effort=configuration.reasoning_effort,
         )
 
 
@@ -181,6 +222,13 @@ def _fallback_model(requested: str, current: str) -> str:
 
 def _stored_models(current: LlmConfiguration | None, same_provider: bool) -> list[str]:
     return list(current.available_models) if current is not None and same_provider else []
+
+
+def _capability_model(provider: str, model: str) -> str:
+    route_provider, _ = _litellm_route(provider, model)
+    if model.startswith(f"{route_provider}/"):
+        return model
+    return f"{route_provider}/{model}"
 
 
 def _normalize_provider(provider: str) -> str:

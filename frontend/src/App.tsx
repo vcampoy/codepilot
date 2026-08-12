@@ -31,6 +31,7 @@ import {
   type Project,
   type AnalysisHistoryItem,
   type LlmConfiguration,
+  type LlmProvider,
 } from './api'
 import { deleteAnalyses, type AnalysisDeletionResult } from './analysisDeletion'
 import { getSelectionState, toggleAllHistorySelection, toggleHistorySelection } from './analysisHistorySelection'
@@ -193,6 +194,31 @@ function App() {
   const [fileDetailError, setFileDetailError] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [llmConfiguration, setLlmConfiguration] = useState<LlmConfiguration | null>(null)
+  const [llmProviders, setLlmProviders] = useState<readonly LlmProvider[]>([])
+  const [llmLoading, setLlmLoading] = useState(true)
+  const [llmError, setLlmError] = useState<string | null>(null)
+
+  useEffect(() => {
+    let cancelled = false
+    setLlmLoading(true)
+    setLlmError(null)
+    void Promise.all([getLlmConfiguration(), getLlmProviders()])
+      .then(([configuration, providerCatalog]) => {
+        if (cancelled) return
+        setLlmConfiguration(configuration)
+        setLlmProviders(providerCatalog.providers)
+      })
+      .catch((loadError: unknown) => {
+        if (!cancelled) {
+          setLlmError(loadError instanceof Error ? loadError.message : 'Unable to load LLM configuration.')
+        }
+      })
+      .finally(() => {
+        if (!cancelled) setLlmLoading(false)
+      })
+    return () => { cancelled = true }
+  }, [])
 
   const refreshHistory = async () => {
     setHistoryBusy(true)
@@ -452,6 +478,11 @@ function App() {
         selectedFilePath={selectedFilePath}
         status={status}
         summary={summary}
+        llmConfiguration={llmConfiguration}
+        llmProviders={llmProviders}
+        llmLoading={llmLoading}
+        llmError={llmError}
+        onLlmConfigurationSaved={setLlmConfiguration}
       />
     </div>
   )
@@ -489,6 +520,11 @@ type WorkspaceViewProps = {
   selectedFilePath: string | null
   status: AnalysisStatus | null
   summary: AnalysisSummaryResponse['summary']
+  llmConfiguration: LlmConfiguration | null
+  llmProviders: readonly LlmProvider[]
+  llmLoading: boolean
+  llmError: string | null
+  onLlmConfigurationSaved: (configuration: LlmConfiguration) => void
 }
 
 function WorkspaceView({
@@ -523,6 +559,11 @@ function WorkspaceView({
   selectedFilePath,
   status,
   summary,
+  llmConfiguration,
+  llmProviders,
+  llmLoading,
+  llmError,
+  onLlmConfigurationSaved,
 }: WorkspaceViewProps) {
   return (
     <main className="main-content">
@@ -568,55 +609,86 @@ function WorkspaceView({
         selectedFilePath,
         status,
         summary,
+        llmConfiguration,
+        llmProviders,
+        llmLoading,
+        llmError,
+        onLlmConfigurationSaved,
       }} />
     </main>
   )
 }
 
-function SetupView() {
-  const [config, setConfig] = useState<LlmConfiguration | null>(null)
-  const [providers, setProviders] = useState<{ id: string; label: string }[]>([])
+function SetupView({
+  configuration,
+  providers,
+  loading,
+  loadError,
+  onSaved,
+}: {
+  configuration: LlmConfiguration | null
+  providers: readonly LlmProvider[]
+  loading: boolean
+  loadError: string | null
+  onSaved: (configuration: LlmConfiguration) => void
+}) {
   const [enabled, setEnabled] = useState(false)
   const [provider, setProvider] = useState('openai')
   const [model, setModel] = useState('')
+  const [reasoningEffort, setReasoningEffort] = useState<string | null>(null)
   const [apiKey, setApiKey] = useState('')
   const [message, setMessage] = useState<string | null>(null)
   const [saving, setSaving] = useState(false)
   useEffect(() => {
-    void Promise.all([getLlmConfiguration(), getLlmProviders()]).then(([value, catalog]) => {
-      setConfig(value); setEnabled(value.enabled); setProvider(value.provider); setModel(value.model); setProviders(catalog.providers)
-    }).catch((error: unknown) => setMessage(error instanceof Error ? error.message : 'Unable to load LLM configuration.'))
-  }, [])
-  const models = config?.provider === provider ? (config.available_models ?? []) : []
+    if (!configuration) return
+    setEnabled(configuration.enabled)
+    setProvider(configuration.provider)
+    setModel(configuration.model)
+    setReasoningEffort(configuration.reasoning_effort ?? null)
+    setApiKey('')
+  }, [configuration])
+  const models = configuration?.provider === provider ? (configuration.available_models ?? []) : []
+  const reasoningEfforts = configuration?.provider === provider
+    ? (configuration.reasoning_efforts_by_model?.[model] ?? [])
+    : []
   async function save() {
+    if (loading || !configuration) return
     setSaving(true); setMessage(null)
     try {
-      const value = await saveLlmConfiguration({ enabled, provider, model: model || undefined, api_key: apiKey || undefined })
-      setConfig(value); setModel(value.model); setApiKey(''); setMessage('LLM configuration saved.')
+      const value = await saveLlmConfiguration({ enabled, provider, model: model || undefined, api_key: apiKey || undefined, ...(reasoningEffort ? { reasoning_effort: reasoningEffort } : {}) })
+      onSaved(value)
+      setModel(value.model); setReasoningEffort(value.reasoning_effort ?? null); setApiKey(''); setMessage('LLM configuration saved.')
     } catch (error) { setMessage(error instanceof Error ? error.message : 'Unable to save LLM configuration.') } finally { setSaving(false) }
   }
   return <section className="page-grid"><div className="panel setup-panel"><div className="panel-title"><span>Setup</span><span className="muted">Workspace configuration</span></div>
     <form className="quality-policy-form setup-form" onSubmit={(event) => { event.preventDefault(); void save() }}>
-      <label className="form-checkbox" htmlFor="setup-enabled"><input checked={enabled} id="setup-enabled" onChange={(event) => setEnabled(event.target.checked)} type="checkbox" /> Enable LLM enrichment</label>
-      <fieldset className="setup-fieldset" disabled={!enabled}><legend>LLM enrichment</legend>
+      <label className="form-checkbox" htmlFor="setup-enabled"><input checked={enabled} disabled={loading} id="setup-enabled" onChange={(event) => setEnabled(event.target.checked)} type="checkbox" /> Enable LLM enrichment</label>
+      <fieldset className="setup-fieldset" disabled={!enabled || loading}><legend>LLM enrichment</legend>
         <div className="setup-fields">
           <div className="form-field">
             <label htmlFor="setup-provider">Provider</label>
-            <select id="setup-provider" value={provider} onChange={(event) => { setProvider(event.target.value); setModel(''); setApiKey('') }}>{providers.map((item) => <option key={item.id} value={item.id}>{item.label}</option>)}</select>
+            <select id="setup-provider" value={provider} onChange={(event) => { setProvider(event.target.value); setModel(''); setReasoningEffort(null); setApiKey('') }}>{providers.map((item) => <option key={item.id} value={item.id}>{item.label}</option>)}</select>
           </div>
           <div className="form-field">
             <label htmlFor="setup-model">Model</label>
-            <select disabled={!models.length} id="setup-model" value={model} onChange={(event) => setModel(event.target.value)}>{models.map((item) => <option key={item} value={item}>{item}</option>)}</select>
+            <select disabled={!models.length || saving} id="setup-model" value={model} onChange={(event) => { const nextModel = event.target.value; const nextEfforts = configuration?.reasoning_efforts_by_model?.[nextModel] ?? []; setModel(nextModel); setReasoningEffort(nextEfforts.includes(reasoningEffort ?? '') ? reasoningEffort : null) }}>{models.map((item) => <option key={item} value={item}>{item}</option>)}</select>
+          </div>
+          <div className="form-field">
+            <label htmlFor="setup-reasoning-effort">Reasoning effort</label>
+            <select disabled={!model || !reasoningEfforts.length || saving} id="setup-reasoning-effort" value={reasoningEffort ?? ''} onChange={(event) => setReasoningEffort(event.target.value || null)}>
+              <option value="">Provider default</option>
+              {reasoningEfforts.map((item) => <option key={item} value={item}>{item}</option>)}
+            </select>
           </div>
           <div className="form-field form-field-wide">
             <label htmlFor="setup-api-key">API key</label>
-            <input id="setup-api-key" type="password" value={apiKey} onChange={(event) => setApiKey(event.target.value)} placeholder={config?.api_key_configured ? 'Stored key (leave blank to keep)' : ''} />
+            <input id="setup-api-key" type="password" value={apiKey} onChange={(event) => setApiKey(event.target.value)} placeholder={configuration?.api_key_configured ? 'Stored key (leave blank to keep)' : ''} />
           </div>
         </div>
       </fieldset>
       <div className="form-actions">
-        <button className="setup-submit-button" disabled={saving} type="submit">{saving ? 'Saving…' : 'Save LLM configuration'}</button>
-        {message && <p className="muted form-message" role="status">{message}</p>}
+        <button className="setup-submit-button" disabled={saving || loading || !configuration} type="submit">{saving ? 'Saving…' : 'Save LLM configuration'}</button>
+        {(message || loadError) && <p className="muted form-message" role="status">{loadError ?? message}</p>}
       </div>
     </form></div></section>
 }
@@ -718,7 +790,15 @@ function WorkspaceContent(props: WorkspaceViewProps) {
       )
 
     case 'setup':
-      return <SetupView />
+      return (
+        <SetupView
+          configuration={props.llmConfiguration}
+          providers={props.llmProviders}
+          loading={props.llmLoading}
+          loadError={props.llmError}
+          onSaved={props.onLlmConfigurationSaved}
+        />
+      )
 
   }
 }

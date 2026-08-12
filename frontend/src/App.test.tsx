@@ -408,6 +408,33 @@ describe('analysis history and quality KPI', () => {
     expect(screen.getByRole('checkbox', { name: 'Select analysis other' })).toBeChecked()
   })
 
+  it('loads persisted Setup configuration as part of the initial App startup', async () => {
+    fixtures.getLlmConfiguration.mockResolvedValue({
+      enabled: true,
+      provider: 'openai',
+      model: 'gpt-5',
+      api_key_configured: true,
+      available_models: ['gpt-5', 'gpt-4o'],
+      reasoning_effort: 'high',
+      reasoning_efforts_by_model: { 'gpt-5': ['minimal', 'low', 'medium', 'high'] },
+    })
+
+    render(<App />)
+
+    await waitFor(() => {
+      expect(fixtures.getLlmConfiguration).toHaveBeenCalledOnce()
+      expect(fixtures.getLlmProviders).toHaveBeenCalledOnce()
+    })
+    expect(screen.queryByLabelText('Provider')).not.toBeInTheDocument()
+
+    fireEvent.click(screen.getByRole('button', { name: 'Setup' }))
+    expect(await screen.findByLabelText('Enable LLM enrichment')).toBeChecked()
+    expect(screen.getByLabelText('Provider')).toHaveValue('openai')
+    expect(screen.getByLabelText('Model')).toHaveValue('gpt-5')
+    expect(screen.getByLabelText('Reasoning effort')).toHaveValue('high')
+    expect(screen.getByLabelText('API key')).toHaveAttribute('placeholder', 'Stored key (leave blank to keep)')
+  })
+
   it('opens Setup without an analysis and keeps LLM controls disabled until enabled', async () => {
     fixtures.getLlmConfiguration.mockResolvedValue({ enabled: false, provider: 'openai', model: 'gpt-5-mini', api_key_configured: false })
     render(<App />)
@@ -482,6 +509,39 @@ describe('analysis history and quality KPI', () => {
       api_key: 'secret',
     }))
     expect(await screen.findByRole('status')).toHaveTextContent('LLM configuration saved.')
+  })
+
+  it('updates effort choices with the selected model and saves the effort', async () => {
+    fixtures.getLlmConfiguration.mockResolvedValue({
+      enabled: true,
+      provider: 'openai',
+      model: 'gpt-5',
+      api_key_configured: true,
+      available_models: ['gpt-5', 'gpt-4o'],
+      reasoning_effort: null,
+      reasoning_efforts_by_model: { 'gpt-5': ['minimal', 'low', 'medium', 'high'], 'gpt-4o': [] },
+    })
+    fixtures.saveLlmConfiguration.mockResolvedValue({
+      enabled: true,
+      provider: 'openai',
+      model: 'gpt-5',
+      api_key_configured: true,
+      available_models: ['gpt-5', 'gpt-4o'],
+      reasoning_effort: 'high',
+      reasoning_efforts_by_model: { 'gpt-5': ['minimal', 'low', 'medium', 'high'], 'gpt-4o': [] },
+    })
+    render(<App />)
+    fireEvent.click(screen.getByRole('button', { name: 'Setup' }))
+    const effort = await screen.findByLabelText('Reasoning effort')
+    expect(effort).toBeEnabled()
+    expect(within(effort).getByRole('option', { name: 'high' })).toBeInTheDocument()
+    fireEvent.change(effort, { target: { value: 'high' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Save LLM configuration' }))
+    await waitFor(() => expect(fixtures.saveLlmConfiguration).toHaveBeenCalledWith(expect.objectContaining({ reasoning_effort: 'high' })))
+    const model = screen.getByLabelText('Model')
+    fireEvent.change(model, { target: { value: 'gpt-4o' } })
+    expect(effort).toHaveValue('')
+    expect(effort).toBeDisabled()
   })
 
   it('shows the saving state and clears the API key after saving', async () => {
@@ -560,6 +620,7 @@ describe('analysis history and quality KPI', () => {
     const provider = await screen.findByLabelText('Provider')
     expect(provider).toBeDisabled()
     expect(screen.getByLabelText('API key')).toHaveValue('')
+    expect(screen.getByRole('button', { name: 'Save LLM configuration' })).toBeDisabled()
 
     configuration.resolve({
       enabled: true,
@@ -570,6 +631,7 @@ describe('analysis history and quality KPI', () => {
     })
     providers.resolve({ providers: LLM_PROVIDERS })
     await waitFor(() => expect(provider).toBeEnabled())
+    expect(screen.getByRole('button', { name: 'Save LLM configuration' })).toBeEnabled()
   })
 })
 describe('completed analysis result loading', () => {

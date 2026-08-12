@@ -153,6 +153,8 @@ export interface LlmConfiguration {
   model: string
   api_key_configured: boolean
   available_models?: string[]
+  reasoning_effort?: string | null
+  reasoning_efforts_by_model?: Record<string, string[]>
 }
 export interface LlmProvider { id: string; label: string }
 
@@ -291,6 +293,7 @@ export function saveLlmConfiguration(payload: {
   provider: string
   model?: string
   api_key?: string
+  reasoning_effort?: string | null
 }): Promise<LlmConfiguration> {
   return request<LlmConfiguration>('/api/v1/settings/llm', { method: 'PUT', body: JSON.stringify(payload) })
 }
