@@ -22,6 +22,7 @@ from codepilot.domain.analysis import (
     AnalysisSummary,
     AnalyzerOutcome,
     SourceContext,
+    fingerprint_finding,
 )
 from codepilot.domain.insights import FileInsight, select_hotspots
 from codepilot.domain.quality import QualityGatePolicy
@@ -122,6 +123,7 @@ class AnalyzerAvailabilityResponse(BaseModel):
 
 
 class AnalysisFindingResponse(BaseModel):
+    finding_id: str
     path: str
     rule_id: str
     analyzer: str
@@ -469,6 +471,7 @@ async def analysis_findings(analysis_id: UUID, request: Request) -> list[Analysi
         ) from error
     return [
         AnalysisFindingResponse(
+            finding_id=fingerprint_finding(finding),
             path=finding.path,
             rule_id=finding.rule_id,
             analyzer=finding.analyzer,
@@ -543,6 +546,7 @@ def _quality_gate_observed_response(
 def _finding_response(finding: object) -> AnalysisFindingResponse:
     item = cast(AnalysisFinding, finding)
     return AnalysisFindingResponse(
+        finding_id=fingerprint_finding(item),
         path=item.path,
         rule_id=item.rule_id,
         analyzer=item.analyzer,

@@ -22,6 +22,10 @@ import {
 
   saveLlmConfiguration,
   requestEnrichment,
+  createFixJob,
+  getFixConfiguration,
+  getFixJob,
+  saveFixConfiguration,
   type AnalysisStatus,
   type AnalysisSummaryResponse,
   type AnalysisFinding,
@@ -32,6 +36,8 @@ import {
   type AnalysisHistoryItem,
   type LlmConfiguration,
   type LlmProvider,
+  type FixConfiguration,
+  type FixJob,
 } from './api'
 import { deleteAnalyses, type AnalysisDeletionResult } from './analysisDeletion'
 import { getSelectionState, toggleAllHistorySelection, toggleHistorySelection } from './analysisHistorySelection'
@@ -198,6 +204,9 @@ function App() {
   const [llmProviders, setLlmProviders] = useState<readonly LlmProvider[]>([])
   const [llmLoading, setLlmLoading] = useState(true)
   const [llmError, setLlmError] = useState<string | null>(null)
+  const [fixConfiguration, setFixConfiguration] = useState<FixConfiguration>({ rules: '' })
+  const [fixLoading, setFixLoading] = useState(true)
+  const [fixError, setFixError] = useState<string | null>(null)
 
   useEffect(() => {
     let cancelled = false
@@ -217,6 +226,23 @@ function App() {
       .finally(() => {
         if (!cancelled) setLlmLoading(false)
       })
+    return () => { cancelled = true }
+  }, [])
+
+  useEffect(() => {
+    let cancelled = false
+    if (typeof getFixConfiguration !== 'function') {
+      setFixLoading(false)
+      return
+    }
+    setFixLoading(true)
+    setFixError(null)
+    void getFixConfiguration()
+      .then((configuration) => { if (!cancelled) setFixConfiguration(configuration) })
+      .catch((loadError: unknown) => {
+        if (!cancelled) setFixError(loadError instanceof Error ? loadError.message : 'Unable to load Fix rules.')
+      })
+      .finally(() => { if (!cancelled) setFixLoading(false) })
     return () => { cancelled = true }
   }, [])
 
@@ -483,6 +509,10 @@ function App() {
         llmLoading={llmLoading}
         llmError={llmError}
         onLlmConfigurationSaved={setLlmConfiguration}
+        fixConfiguration={fixConfiguration}
+        fixLoading={fixLoading}
+        fixError={fixError}
+        onFixConfigurationSaved={setFixConfiguration}
       />
     </div>
   )
@@ -525,6 +555,10 @@ type WorkspaceViewProps = {
   llmLoading: boolean
   llmError: string | null
   onLlmConfigurationSaved: (configuration: LlmConfiguration) => void
+  fixConfiguration: FixConfiguration
+  fixLoading: boolean
+  fixError: string | null
+  onFixConfigurationSaved: (configuration: FixConfiguration) => void
 }
 
 function WorkspaceView({
@@ -564,6 +598,10 @@ function WorkspaceView({
   llmLoading,
   llmError,
   onLlmConfigurationSaved,
+  fixConfiguration,
+  fixLoading,
+  fixError,
+  onFixConfigurationSaved,
 }: WorkspaceViewProps) {
   return (
     <main className="main-content">
@@ -614,6 +652,10 @@ function WorkspaceView({
         llmLoading,
         llmError,
         onLlmConfigurationSaved,
+        fixConfiguration,
+        fixLoading,
+        fixError,
+        onFixConfigurationSaved,
       }} />
     </main>
   )
@@ -625,12 +667,20 @@ function SetupView({
   loading,
   loadError,
   onSaved,
+  fixConfiguration,
+  fixLoading,
+  fixError,
+  onFixSaved,
 }: {
   configuration: LlmConfiguration | null
   providers: readonly LlmProvider[]
   loading: boolean
   loadError: string | null
   onSaved: (configuration: LlmConfiguration) => void
+  fixConfiguration: FixConfiguration
+  fixLoading: boolean
+  fixError: string | null
+  onFixSaved: (configuration: FixConfiguration) => void
 }) {
   const [enabled, setEnabled] = useState(false)
   const [provider, setProvider] = useState('openai')
@@ -639,6 +689,9 @@ function SetupView({
   const [apiKey, setApiKey] = useState('')
   const [message, setMessage] = useState<string | null>(null)
   const [saving, setSaving] = useState(false)
+  const [fixRules, setFixRules] = useState('')
+  const [fixSaving, setFixSaving] = useState(false)
+  const [fixMessage, setFixMessage] = useState<string | null>(null)
   useEffect(() => {
     if (!configuration) return
     setEnabled(configuration.enabled)
@@ -647,6 +700,7 @@ function SetupView({
     setReasoningEffort(configuration.reasoning_effort ?? null)
     setApiKey('')
   }, [configuration])
+  useEffect(() => setFixRules(fixConfiguration.rules), [fixConfiguration.rules])
   const models = configuration?.provider === provider ? (configuration.available_models ?? []) : []
   const reasoningEfforts = configuration?.provider === provider
     ? (configuration.reasoning_efforts_by_model?.[model] ?? [])
@@ -659,6 +713,17 @@ function SetupView({
       onSaved(value)
       setModel(value.model); setReasoningEffort(value.reasoning_effort ?? null); setApiKey(''); setMessage('LLM configuration saved.')
     } catch (error) { setMessage(error instanceof Error ? error.message : 'Unable to save LLM configuration.') } finally { setSaving(false) }
+  }
+  async function saveFixRules() {
+    if (fixLoading) return
+    setFixSaving(true); setFixMessage(null)
+    try {
+      const value = await saveFixConfiguration({ rules: fixRules })
+      onFixSaved(value)
+      setFixMessage('Fix rules saved.')
+    } catch (error) {
+      setFixMessage(error instanceof Error ? error.message : 'Unable to save Fix rules.')
+    } finally { setFixSaving(false) }
   }
   return <section className="page-grid"><div className="panel setup-panel"><div className="panel-title"><span>Setup</span><span className="muted">Workspace configuration</span></div>
     <form className="quality-policy-form setup-form" onSubmit={(event) => { event.preventDefault(); void save() }}>
@@ -690,6 +755,19 @@ function SetupView({
         <button className="setup-submit-button" disabled={saving || loading || !configuration} type="submit">{saving ? 'Saving…' : 'Save LLM configuration'}</button>
         {(message || loadError) && <p className="muted form-message" role="status">{loadError ?? message}</p>}
       </div>
+      <fieldset className="setup-fieldset fix-rules-fieldset" disabled={fixLoading || fixSaving}>
+        <legend>Fix rules</legend>
+        <div className="form-field">
+          <label htmlFor="fix-rules">Instructions to follow when fixing findings</label>
+          <textarea id="fix-rules" rows={8} value={fixRules} onChange={(event) => setFixRules(event.target.value)} />
+        </div>
+        <div className="form-actions">
+          <button className="setup-submit-button" disabled={fixLoading || fixSaving} onClick={() => void saveFixRules()} type="button">
+            {fixSaving ? 'Saving…' : 'Save Fix rules'}
+          </button>
+          {(fixMessage || fixError) && <p className="muted form-message" role="status">{fixError ?? fixMessage}</p>}
+        </div>
+      </fieldset>
     </form></div></section>
 }
 
@@ -752,6 +830,7 @@ function WorkspaceContent(props: WorkspaceViewProps) {
           repositoryUrl={props.analyzedRepositoryUrl}
           analysisId={props.analysisId}
           onSelectPath={props.onSelectPath}
+          llmEnabled={Boolean(props.llmConfiguration?.enabled)}
         />
       )
     case 'hotspots':
@@ -797,6 +876,10 @@ function WorkspaceContent(props: WorkspaceViewProps) {
           loading={props.llmLoading}
           loadError={props.llmError}
           onSaved={props.onLlmConfigurationSaved}
+          fixConfiguration={props.fixConfiguration}
+          fixLoading={props.fixLoading}
+          fixError={props.fixError}
+          onFixSaved={props.onFixConfigurationSaved}
         />
       )
 
@@ -811,6 +894,7 @@ function FindingsView({
   repositoryUrl,
   analysisId,
   onSelectPath,
+  llmEnabled,
 }: {
   findings: AnalysisFinding[]
   status: AnalysisStatus | null
@@ -819,12 +903,54 @@ function FindingsView({
   repositoryUrl: string | null
   analysisId: string | null
   onSelectPath: (path: string) => void
+  llmEnabled: boolean
 }) {
   const [sort, setSort] = useState<FindingSort>({ column: 'severity', direction: 'desc' })
   const [visibleColumns, setVisibleColumns] = useState<FindingColumnKey[]>(() => FINDING_COLUMNS.map(({ key }) => key))
   const [filters, setFilters] = useState<FindingFilters>({ severities: [], types: [] })
   const [draftFilters, setDraftFilters] = useState<FindingFilters>({ severities: [], types: [] })
   const [filterDialogOpen, setFilterDialogOpen] = useState(false)
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(() => new Set())
+  const [fixBusy, setFixBusy] = useState(false)
+  const [fixJob, setFixJob] = useState<FixJob | null>(null)
+  const [fixError, setFixError] = useState<string | null>(null)
+  const findingIdentity = (finding: AnalysisFinding) => finding.finding_id
+    ?? `${finding.analyzer}:${finding.path}:${finding.start_line}:${finding.end_line}:${finding.rule_id}`
+  useEffect(() => {
+    setSelectedIds((current) => {
+      const valid = new Set(findings.map(findingIdentity))
+      return new Set([...current].filter((id) => valid.has(id)))
+    })
+  }, [findings])
+  const toggleFindingSelection = (finding: AnalysisFinding) => {
+    const id = findingIdentity(finding)
+    setSelectedIds((current) => {
+      const next = new Set(current)
+      if (next.has(id)) next.delete(id)
+      else if (next.size < 10) next.add(id)
+      return next
+    })
+  }
+  const submitFixes = async () => {
+    if (!analysisId || !llmEnabled || selectedIds.size === 0 || typeof createFixJob !== 'function') return
+    setFixBusy(true); setFixError(null); setFixJob(null)
+    try {
+      const job = await createFixJob(analysisId, [...selectedIds])
+      setFixJob(job)
+      if (job.status === 'queued' || job.status === 'running') {
+        let current = job
+        for (let attempt = 0; attempt < 180; attempt += 1) {
+          await new Promise((resolve) => window.setTimeout(resolve, 1000))
+          if (typeof getFixJob !== 'function') break
+          current = await getFixJob(job.job_id)
+          setFixJob(current)
+          if (current.status === 'succeeded' || current.status === 'failed') break
+        }
+      }
+    } catch (error) {
+      setFixError(error instanceof Error ? error.message : 'Unable to fix findings.')
+    } finally { setFixBusy(false) }
+  }
   const availableTypes = useMemo(
     () =>
       [...new Set(findings.map((finding) => categoryLabel(finding.category)))].sort((left, right) =>
@@ -875,6 +1001,7 @@ function FindingsView({
   const filteredFindings = filterFindings(findings, filters)
   const counts = severityCounts(filteredFindings)
   const orderedFindings = sortFindings(filteredFindings, sort)
+  const canFix = llmEnabled && selectedIds.size > 0 && !fixBusy
   const toggleSort = (column: FindingColumnKey) => setSort((current) => toggleFindingSort(current, column))
   const toggleSeverity = (severity: (typeof FINDING_SEVERITIES)[number]) => {
     setDraftFilters((current) => ({
@@ -936,6 +1063,14 @@ function FindingsView({
               </fieldset>
             </details>
             <button
+              className="setup-submit-button"
+              disabled={!canFix}
+              onClick={() => void submitFixes()}
+              type="button"
+            >
+              {fixBusy ? 'Fixing…' : 'Fix Findings'}
+            </button>
+            <button
               className="secondary-button"
               disabled={orderedFindings.length === 0}
               onClick={exportFindings}
@@ -945,6 +1080,13 @@ function FindingsView({
             </button>
           </div>
         </div>
+        {(fixError || fixJob) && (
+          <p className={fixError || fixJob?.status === 'failed' ? 'error-copy' : 'muted'} role="status">
+            {fixError || fixJob?.error_message || (fixJob?.status === 'succeeded' && fixJob.pull_request_url
+              ? <><a href={fixJob.pull_request_url} rel="noreferrer" target="_blank">Pull Request ready</a></>
+              : `Fix job ${fixJob?.status}.`)}
+          </p>
+        )}
         <AppliedFilterTags values={[...filters.severities, ...filters.types]} />
         <TableFilterDialog
           onApply={applyFilters}
@@ -1001,6 +1143,7 @@ function FindingsView({
               <caption className="sr-only">Repository findings sorted by {sort.column}</caption>
               <thead>
                 <tr>
+                  <th aria-label="Select" scope="col" />
                   {FINDING_COLUMNS.filter(({ key }) => visibleColumns.includes(key)).map(({ key, label }) => (
                     <th
                       aria-sort={sort.column === key ? (sort.direction === 'asc' ? 'ascending' : 'descending') : 'none'}
@@ -1028,6 +1171,15 @@ function FindingsView({
                   ].join('')
                   return (
                     <tr key={`${finding.analyzer}-${finding.path}-${finding.start_line}-${finding.rule_id}`}>
+                      <td className="finding-select-cell">
+                        <input
+                          aria-label={`Select finding ${finding.rule_id} at ${finding.path}:${finding.start_line}`}
+                          checked={selectedIds.has(findingIdentity(finding))}
+                          disabled={!selectedIds.has(findingIdentity(finding)) && selectedIds.size >= 10}
+                          onChange={() => toggleFindingSelection(finding)}
+                          type="checkbox"
+                        />
+                      </td>
                       {visibleColumns.includes('description') && <td data-label="Description">
                         <strong>{finding.message}</strong>
                         <small className="finding-meta">

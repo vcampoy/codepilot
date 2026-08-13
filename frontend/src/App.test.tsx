@@ -44,6 +44,10 @@ const fixtures = vi.hoisted(() => ({
   getLlmProviders: vi.fn(),
   saveLlmConfiguration: vi.fn(),
   requestEnrichment: vi.fn(),
+  getFixConfiguration: vi.fn(),
+  saveFixConfiguration: vi.fn(),
+  createFixJob: vi.fn(),
+  getFixJob: vi.fn(),
   downloadMarkdownFile: vi.fn(),
 }))
 
@@ -204,6 +208,7 @@ beforeEach(() => {
   fixtures.getAnalysisHistory.mockResolvedValue({ items: [], total: 0, limit: 20, offset: 0 })
   fixtures.getLlmConfiguration.mockResolvedValue(DEFAULT_LLM_CONFIGURATION)
   fixtures.getLlmProviders.mockResolvedValue({ providers: LLM_PROVIDERS })
+  fixtures.getFixConfiguration.mockResolvedValue({ rules: '' })
 })
 
 afterEach(() => cleanup())

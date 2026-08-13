@@ -36,7 +36,9 @@ from codepilot.github.webhooks import GitHubWebhookService, InMemoryWebhookEvent
 from codepilot.llm.contracts import EnrichmentTask, NoOpLlmGateway
 from codepilot.llm.gateway import LiteLlmGateway
 from codepilot.repositories.analysis import PostgresAnalysisRepository
+from codepilot.repositories.fixes import PostgresFixRepository
 from codepilot.services.analysis import AnalysisService, NoopAnalyzer
+from codepilot.services.fixes import FixService
 from codepilot.services.llm_configuration import LlmConfigurationService
 from codepilot.services.llm_enrichment import LlmEnrichmentService, LlmGateway
 from codepilot.services.llm_providers import ProviderDiscovery
@@ -45,6 +47,7 @@ from codepilot.services.repository_ingestion import (
     RepositoryIngestionService,
 )
 from codepilot.worker.analysis_tasks import queue_for_celery
+from codepilot.worker.fix_tasks import queue_for_celery as fix_queue_for_celery
 
 
 @asynccontextmanager
@@ -58,6 +61,11 @@ async def lifespan(application: FastAPI) -> AsyncIterator[None]:
             dispose = getattr(repository, "dispose", None)
             if dispose is not None:
                 await dispose()
+        if getattr(application.state, "owns_fix_repository", False):
+            repository = getattr(application.state, "fix_repository", None)
+            dispose = getattr(repository, "dispose", None)
+            if dispose is not None:
+                await dispose()
 
 
 def create_app(
@@ -67,6 +75,7 @@ def create_app(
     llm_gateway: LlmGateway | None = None,
     llm_discovery: ProviderDiscovery | None = None,
     github_webhook_service: GitHubWebhookService | None = None,
+    fix_service: FixService | None = None,
 ) -> FastAPI:
     """Create an independently configured FastAPI application."""
     resolved_settings = settings if settings is not None else get_settings()
@@ -112,6 +121,20 @@ def create_app(
     application.state.analysis_repository = analysis_repository
     application.state.owns_analysis_repository = owns_analysis_repository
     application.state.analysis_service = resolved_analysis_service
+    owns_fix_repository = fix_service is None
+    fix_repository: Any
+    if fix_service is None:
+        fix_repository = PostgresFixRepository(resolved_settings.database_url_value())
+        fix_service = FixService(
+            analysis_repository,
+            fix_repository,
+            fix_queue_for_celery(),
+        )
+    else:
+        fix_repository = getattr(fix_service, "_repository", None)
+    application.state.fix_service = fix_service
+    application.state.fix_repository = fix_repository
+    application.state.owns_fix_repository = owns_fix_repository
     resolved_llm_gateway = llm_gateway or _build_llm_gateway(resolved_settings)
     application.state.llm_enrichment_service = LlmEnrichmentService(
         resolved_llm_gateway, analysis_repository

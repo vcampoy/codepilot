@@ -104,6 +104,8 @@ input, select { width: 100%; border: 1px solid var(--line); border-radius: 3px; 
 .finding-disclosure { width: 100%; border-top: 0; border-right: 0; border-left: 0; background: transparent; color: var(--ink); cursor: pointer; text-align: left; }
 .finding-disclosure:hover { background: rgba(182,240,156,.035); }
 .findings-table td:first-child { min-width: 360px; }
+.findings-table th.finding-select-cell, .findings-table td.finding-select-cell { width: 1%; min-width: 0; white-space: nowrap; }
+.finding-select-cell input { width: auto; accent-color: var(--accent); }
 .findings-table td strong { display: block; color: var(--ink); font-size: .82rem; font-weight: 560; line-height: 1.5; }
 .finding-meta { display: flex; flex-wrap: wrap; gap: 8px 14px; margin-top: 8px; font-size: .68rem; }
 .finding-meta code { color: var(--muted); }

@@ -1,0 +1,111 @@
+"""Fix Findings settings and asynchronous job endpoints."""
+
+from __future__ import annotations
+
+from typing import cast
+from uuid import UUID
+
+from fastapi import APIRouter, Request, status
+from pydantic import BaseModel, Field
+
+from codepilot.core.auth import authenticate
+from codepilot.core.errors import ApplicationError
+from codepilot.domain.fixes import FixConfiguration, FixJob
+from codepilot.services.fixes import FixService, FixValidationError
+
+router = APIRouter(tags=["fixes"])
+
+
+class FixConfigurationPayload(BaseModel):
+    rules: str = Field(default="", max_length=32_000)
+
+
+class FixConfigurationResponse(BaseModel):
+    rules: str
+    updated_at: str
+
+
+class FixJobPayload(BaseModel):
+    finding_ids: list[str] = Field(min_length=1, max_length=10)
+
+
+class FixJobResponse(BaseModel):
+    job_id: UUID
+    analysis_id: UUID
+    status: str
+    finding_ids: list[str]
+    branch_name: str | None
+    pull_request_url: str | None
+    error_message: str | None
+    created_at: str
+    updated_at: str
+
+
+@router.get("/settings/fixes", response_model=FixConfigurationResponse)
+async def get_fix_configuration(request: Request) -> FixConfigurationResponse:
+    identity = authenticate(request)
+    return _configuration(await _service(request).get_rules(identity.workspace_id))
+
+
+@router.put("/settings/fixes", response_model=FixConfigurationResponse)
+async def save_fix_configuration(
+    payload: FixConfigurationPayload, request: Request
+) -> FixConfigurationResponse:
+    identity = authenticate(request)
+    try:
+        return _configuration(
+            await _service(request).save_rules(identity.workspace_id, payload.rules)
+        )
+    except FixValidationError as error:
+        raise ApplicationError("invalid_fix_configuration", str(error), status_code=400) from error
+
+
+@router.post(
+    "/analyses/{analysis_id}/fix-jobs",
+    response_model=FixJobResponse,
+    status_code=status.HTTP_202_ACCEPTED,
+)
+async def create_fix_job(
+    analysis_id: UUID, payload: FixJobPayload, request: Request
+) -> FixJobResponse:
+    identity = authenticate(request)
+    try:
+        job = await _service(request).create_job(
+            analysis_id, payload.finding_ids, identity.workspace_id
+        )
+    except FixValidationError as error:
+        raise ApplicationError("invalid_fix_job", str(error), status_code=400) from error
+    except RuntimeError as error:
+        raise ApplicationError("fix_job_unavailable", str(error), status_code=503) from error
+    return _job(job)
+
+
+@router.get("/fix-jobs/{job_id}", response_model=FixJobResponse)
+async def get_fix_job(job_id: UUID, request: Request) -> FixJobResponse:
+    identity = authenticate(request)
+    try:
+        return _job(await _service(request).get_job(job_id, identity.workspace_id))
+    except FixValidationError as error:
+        raise ApplicationError("fix_job_not_found", str(error), status_code=404) from error
+
+
+def _service(request: Request) -> FixService:
+    return cast(FixService, request.app.state.fix_service)
+
+
+def _configuration(value: FixConfiguration) -> FixConfigurationResponse:
+    return FixConfigurationResponse(rules=value.rules, updated_at=value.updated_at.isoformat())
+
+
+def _job(value: FixJob) -> FixJobResponse:
+    return FixJobResponse(
+        job_id=value.job_id,
+        analysis_id=value.analysis_id,
+        status=value.status.value,
+        finding_ids=list(value.finding_ids),
+        branch_name=value.branch_name,
+        pull_request_url=value.pull_request_url,
+        error_message=value.error_message,
+        created_at=value.created_at.isoformat(),
+        updated_at=value.updated_at.isoformat(),
+    )

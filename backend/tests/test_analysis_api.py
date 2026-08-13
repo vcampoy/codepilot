@@ -227,7 +227,11 @@ def test_findings_endpoint_returns_persisted_findings_and_summary_outcomes() -> 
         summary = client.get(f"/api/v1/analyses/{analysis_id}/summary")
 
     assert findings.status_code == 200
-    assert findings.json() == [
+    findings_payload = findings.json()
+    assert len(findings_payload) == 1
+    assert len(findings_payload[0]["finding_id"]) == 64
+    findings_payload[0].pop("finding_id")
+    assert findings_payload == [
         {
             "path": "src/main.py",
             "rule_id": "PY001",

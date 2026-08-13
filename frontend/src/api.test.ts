@@ -9,6 +9,10 @@ import {
   getAnalysisSummary,
   getLlmConfiguration,
   saveLlmConfiguration,
+  getFixConfiguration,
+  saveFixConfiguration,
+  createFixJob,
+  getFixJob,
 } from './api'
 
 afterEach(() => {
@@ -148,5 +152,31 @@ describe('analysis API client', () => {
     await expect(getLlmConfiguration()).resolves.toMatchObject({ provider: 'openai' })
     expect(fetchMock.mock.calls[0][0]).toBe('http://localhost:8000/api/v1/settings/llm')
     expect(fetchMock.mock.calls[0][1]).toMatchObject({ method: 'PUT' })
+  })
+
+  it('reads and saves Fix rules and creates/polls a Fix job', async () => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(new Response(JSON.stringify({ rules: 'Run tests first' }), { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ rules: 'Use TDD' }), { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({
+        job_id: 'job-1', analysis_id: 'analysis-1', finding_ids: ['F-1'], status: 'queued',
+        branch_name: null, pull_request_url: null, error_message: null,
+      }), { status: 202 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({
+        job_id: 'job-1', analysis_id: 'analysis-1', finding_ids: ['F-1'], status: 'succeeded',
+        branch_name: 'fix-findings-2026', pull_request_url: 'https://github.com/acme/demo/pull/1', error_message: null,
+      }), { status: 200 }))
+    vi.stubGlobal('fetch', fetchMock)
+
+    await expect(getFixConfiguration()).resolves.toEqual({ rules: 'Run tests first' })
+    await expect(saveFixConfiguration({ rules: 'Use TDD' })).resolves.toEqual({ rules: 'Use TDD' })
+    await expect(createFixJob('analysis-1', ['F-1'])).resolves.toMatchObject({ job_id: 'job-1' })
+    await expect(getFixJob('job-1')).resolves.toMatchObject({ status: 'succeeded' })
+    expect(fetchMock.mock.calls.map(([url]) => url)).toEqual([
+      'http://localhost:8000/api/v1/settings/fixes',
+      'http://localhost:8000/api/v1/settings/fixes',
+      'http://localhost:8000/api/v1/analyses/analysis-1/fix-jobs',
+      'http://localhost:8000/api/v1/fix-jobs/job-1',
+    ])
   })
 })

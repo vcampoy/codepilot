@@ -108,6 +108,7 @@ export interface AnalyzerOutcome {
   message: string | null; language?: string | null; generic?: boolean
 }
 export interface AnalysisFinding {
+  finding_id?: string
   path: string
   rule_id: string
   analyzer: string
@@ -120,6 +121,23 @@ export interface AnalysisFinding {
   evidence?: string | null
   remediation?: string | null
   source_context?: SourceContext | null
+}
+
+export interface FixConfiguration {
+  rules: string
+}
+
+export type FixJobStatus = 'queued' | 'running' | 'succeeded' | 'failed'
+
+export interface FixJob {
+  job_id: string
+  analysis_id: string
+  finding_ids: string[]
+  status: FixJobStatus
+  branch_name: string | null
+  error: string | null
+  error_message?: string | null
+  pull_request_url: string | null
 }
 
 export interface SourceContextLine { number: number; text: string; highlighted?: boolean }
@@ -296,6 +314,28 @@ export function saveLlmConfiguration(payload: {
   reasoning_effort?: string | null
 }): Promise<LlmConfiguration> {
   return request<LlmConfiguration>('/api/v1/settings/llm', { method: 'PUT', body: JSON.stringify(payload) })
+}
+
+export function getFixConfiguration(): Promise<FixConfiguration> {
+  return request<FixConfiguration>('/api/v1/settings/fixes')
+}
+
+export function saveFixConfiguration(payload: FixConfiguration): Promise<FixConfiguration> {
+  return request<FixConfiguration>('/api/v1/settings/fixes', {
+    method: 'PUT',
+    body: JSON.stringify(payload),
+  })
+}
+
+export function createFixJob(analysisId: string, findingIds: readonly string[]): Promise<FixJob> {
+  return request<FixJob>(`/api/v1/analyses/${encodeURIComponent(analysisId)}/fix-jobs`, {
+    method: 'POST',
+    body: JSON.stringify({ finding_ids: findingIds }),
+  })
+}
+
+export function getFixJob(jobId: string): Promise<FixJob> {
+  return request<FixJob>(`/api/v1/fix-jobs/${encodeURIComponent(jobId)}`)
 }
 
 export const apiDocsUrl = `${apiBaseUrl}/docs`

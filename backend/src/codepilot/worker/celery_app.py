@@ -36,3 +36,4 @@ celery_app = create_celery_app()
 # The Docker command imports this module directly. Import task definitions here
 # so a fresh worker process registers analysis tasks before consuming messages.
 from codepilot.worker import analysis_tasks as _analysis_tasks  # noqa: E402,F401,RUF100
+from codepilot.worker import fix_tasks as _fix_tasks  # noqa: E402,F401,RUF100
