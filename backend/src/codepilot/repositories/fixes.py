@@ -12,7 +12,7 @@ from sqlalchemy import JSON, Column, DateTime, MetaData, String, Table, Text, Uu
 from sqlalchemy.dialects.postgresql import insert as postgresql_insert
 from sqlalchemy.ext.asyncio import AsyncEngine, create_async_engine
 
-from codepilot.domain.fixes import FixConfiguration, FixJob, FixJobStatus
+from codepilot.domain.fixes import FixConfiguration, FixJob, FixJobStatus, FixTargetType
 
 
 class FixRepository(Protocol):
@@ -28,6 +28,7 @@ class FixRepository(Protocol):
         workspace_id: str,
         error_message: str | None = None,
         pull_request_url: str | None = None,
+        branch_name: str | None = None,
     ) -> FixJob | None: ...
 
 
@@ -66,6 +67,7 @@ class InMemoryFixRepository:
         workspace_id: str,
         error_message: str | None = None,
         pull_request_url: str | None = None,
+        branch_name: str | None = None,
     ) -> FixJob | None:
         async with self._lock:
             current = self._jobs.get(job_id)
@@ -76,6 +78,7 @@ class InMemoryFixRepository:
                 status=status,
                 error_message=error_message,
                 pull_request_url=pull_request_url,
+                branch_name=branch_name if branch_name is not None else current.branch_name,
                 updated_at=datetime.now(UTC),
             )
             self._jobs[job_id] = updated
@@ -88,6 +91,8 @@ _FIX_CONFIGURATIONS = Table(
     _METADATA,
     Column("workspace_id", String(64), primary_key=True),
     Column("rules", Text, nullable=False),
+    Column("finding_rules", Text, nullable=False, server_default=""),
+    Column("hotspot_rules", Text, nullable=False, server_default=""),
     Column("updated_at", DateTime(timezone=True), nullable=False),
 )
 _FIX_JOBS = Table(
@@ -97,6 +102,8 @@ _FIX_JOBS = Table(
     Column("analysis_id", Uuid(as_uuid=True), nullable=False),
     Column("workspace_id", String(64), nullable=False),
     Column("finding_ids", JSON, nullable=False),
+    Column("target_type", String(16), nullable=False, server_default="finding"),
+    Column("target_ids", JSON, nullable=False, server_default="[]"),
     Column("status", String(16), nullable=False),
     Column("branch_name", String(128)),
     Column("pull_request_url", String(2048)),
@@ -132,7 +139,12 @@ class PostgresFixRepository:
             )
             statement = statement.on_conflict_do_update(
                 index_elements=[_FIX_CONFIGURATIONS.c.workspace_id],
-                set_={"rules": configuration.rules, "updated_at": configuration.updated_at},
+                set_={
+                    "rules": configuration.rules,
+                    "finding_rules": configuration.finding_rules or configuration.rules,
+                    "hotspot_rules": configuration.hotspot_rules or "",
+                    "updated_at": configuration.updated_at,
+                },
             )
             await connection.execute(statement)
         return configuration
@@ -158,6 +170,7 @@ class PostgresFixRepository:
         workspace_id: str,
         error_message: str | None = None,
         pull_request_url: str | None = None,
+        branch_name: str | None = None,
     ) -> FixJob | None:
         now = datetime.now(UTC)
         async with self._engine.begin() as connection:
@@ -168,6 +181,7 @@ class PostgresFixRepository:
                     status=status.value,
                     error_message=error_message,
                     pull_request_url=pull_request_url,
+                    branch_name=branch_name,
                     updated_at=now,
                 )
             )
@@ -183,6 +197,8 @@ def _configuration_values(value: FixConfiguration) -> dict[str, object]:
     return {
         "workspace_id": value.workspace_id,
         "rules": value.rules,
+        "finding_rules": value.finding_rules or value.rules,
+        "hotspot_rules": value.hotspot_rules or "",
         "updated_at": value.updated_at,
     }
 
@@ -193,6 +209,8 @@ def _job_values(value: FixJob) -> dict[str, object]:
         "analysis_id": value.analysis_id,
         "workspace_id": value.workspace_id,
         "finding_ids": list(value.finding_ids),
+        "target_type": value.target_type.value,
+        "target_ids": list(value.target_ids),
         "status": value.status.value,
         "branch_name": value.branch_name,
         "pull_request_url": value.pull_request_url,
@@ -204,7 +222,11 @@ def _job_values(value: FixJob) -> dict[str, object]:
 
 def _configuration_from_row(row: Any) -> FixConfiguration:
     return FixConfiguration(
-        str(row["workspace_id"]), str(row["rules"]), cast(datetime, row["updated_at"])
+        workspace_id=str(row["workspace_id"]),
+        rules=str(row.get("rules") or row.get("finding_rules") or ""),
+        updated_at=cast(datetime, row["updated_at"]),
+        finding_rules=str(row.get("finding_rules") or row.get("rules") or ""),
+        hotspot_rules=str(row.get("hotspot_rules") or ""),
     )
 
 
@@ -213,7 +235,9 @@ def _job_from_row(row: Any) -> FixJob:
         job_id=cast(UUID, row["job_id"]),
         analysis_id=cast(UUID, row["analysis_id"]),
         workspace_id=str(row["workspace_id"]),
-        finding_ids=tuple(str(x) for x in (row.get("finding_ids") or [])),
+        finding_ids=tuple(str(x) for x in (row.get("finding_ids") or row.get("target_ids") or [])),
+        target_type=FixTargetType(str(row.get("target_type") or "finding")),
+        target_ids=tuple(str(x) for x in (row.get("target_ids") or row.get("finding_ids") or [])),
         status=FixJobStatus(str(row["status"])),
         branch_name=cast(str | None, row.get("branch_name")),
         pull_request_url=cast(str | None, row.get("pull_request_url")),

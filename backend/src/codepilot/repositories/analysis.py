@@ -140,6 +140,8 @@ class AnalysisRepository(Protocol):
 
     async def get_findings(self, analysis_id: UUID) -> tuple[AnalysisFinding, ...]: ...
 
+    async def get_file_insights(self, analysis_id: UUID) -> tuple[FileInsight, ...]: ...
+
     async def persist_file_insights(
         self,
         analysis_id: UUID,
@@ -519,6 +521,11 @@ class InMemoryAnalysisRepository:
             record = self._require(analysis_id)
             self._require_running(record, lease_token, now)
             self._file_insights[analysis_id] = tuple(insights)
+
+    async def get_file_insights(self, analysis_id: UUID) -> tuple[FileInsight, ...]:
+        async with self._lock:
+            self._require(analysis_id)
+            return tuple(self._file_insights.get(analysis_id, ()))
 
     async def complete(
         self,
@@ -1270,6 +1277,16 @@ class PostgresAnalysisRepository:
             if values:
                 await connection.execute(_FILE_INSIGHTS.insert(), values)
 
+    async def get_file_insights(self, analysis_id: UUID) -> tuple[FileInsight, ...]:
+        async with self._engine.connect() as connection:
+            result = await connection.execute(
+                select(_FILE_INSIGHTS)
+                .where(_FILE_INSIGHTS.c.analysis_id == analysis_id)
+                .order_by(_FILE_INSIGHTS.c.path)
+            )
+            rows = result.mappings().all()
+        return tuple(_file_insight_from_row(row) for row in rows)
+
     async def complete(
         self,
         analysis_id: UUID,
@@ -1671,6 +1688,15 @@ def _file_insight_to_json(insight: FileInsight) -> dict[str, object]:
         "metrics": insight.metrics,
         "risk": _risk_to_json(insight.risk) if insight.risk else None,
     }
+
+
+def _file_insight_from_row(row: Any) -> FileInsight:
+    return FileInsight(
+        path=str(row["path"]),
+        hotspot_score=float(row["hotspot_score"]),
+        metrics={str(key): float(value) for key, value in dict(row.get("metrics") or {}).items()},
+        risk=_risk_from_json(row.get("risk")),
+    )
 
 
 def _summary_from_json(value: Any) -> AnalysisSummary | None:

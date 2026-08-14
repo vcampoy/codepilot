@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import type { FormEvent } from 'react'
 import { useId } from 'react'
 import {
@@ -43,6 +43,7 @@ import { deleteAnalyses, type AnalysisDeletionResult } from './analysisDeletion'
 import { getSelectionState, toggleAllHistorySelection, toggleHistorySelection } from './analysisHistorySelection'
 import { createFindingsMarkdownExport, downloadMarkdownFile } from './findingsExport'
 import { createHotspotsMarkdownExport, MAX_HOTSPOTS_EXPORT } from './hotspotsExport'
+import { chunkSelection, selectionState, toggleVisibleSelection } from './bulkSelection'
 import { TableFilterDialog } from './components/TableFilterDialog'
 import { ConfirmationDialog } from './components/ConfirmationDialog'
 import {
@@ -204,7 +205,7 @@ function App() {
   const [llmProviders, setLlmProviders] = useState<readonly LlmProvider[]>([])
   const [llmLoading, setLlmLoading] = useState(true)
   const [llmError, setLlmError] = useState<string | null>(null)
-  const [fixConfiguration, setFixConfiguration] = useState<FixConfiguration>({ rules: '' })
+  const [fixConfiguration, setFixConfiguration] = useState<FixConfiguration>({ finding_rules: '', hotspot_rules: '' })
   const [fixLoading, setFixLoading] = useState(true)
   const [fixError, setFixError] = useState<string | null>(null)
 
@@ -689,7 +690,8 @@ function SetupView({
   const [apiKey, setApiKey] = useState('')
   const [message, setMessage] = useState<string | null>(null)
   const [saving, setSaving] = useState(false)
-  const [fixRules, setFixRules] = useState('')
+  const [findingRules, setFindingRules] = useState('')
+  const [hotspotRules, setHotspotRules] = useState('')
   const [fixSaving, setFixSaving] = useState(false)
   const [fixMessage, setFixMessage] = useState<string | null>(null)
   useEffect(() => {
@@ -700,7 +702,10 @@ function SetupView({
     setReasoningEffort(configuration.reasoning_effort ?? null)
     setApiKey('')
   }, [configuration])
-  useEffect(() => setFixRules(fixConfiguration.rules), [fixConfiguration.rules])
+  useEffect(() => {
+    setFindingRules(fixConfiguration.finding_rules ?? fixConfiguration.rules ?? '')
+    setHotspotRules(fixConfiguration.hotspot_rules ?? '')
+  }, [fixConfiguration.finding_rules, fixConfiguration.hotspot_rules, fixConfiguration.rules])
   const models = configuration?.provider === provider ? (configuration.available_models ?? []) : []
   const reasoningEfforts = configuration?.provider === provider
     ? (configuration.reasoning_efforts_by_model?.[model] ?? [])
@@ -718,7 +723,7 @@ function SetupView({
     if (fixLoading) return
     setFixSaving(true); setFixMessage(null)
     try {
-      const value = await saveFixConfiguration({ rules: fixRules })
+      const value = await saveFixConfiguration({ rules: findingRules, finding_rules: findingRules, hotspot_rules: hotspotRules })
       onFixSaved(value)
       setFixMessage('Fix rules saved.')
     } catch (error) {
@@ -758,8 +763,12 @@ function SetupView({
       <fieldset className="setup-fieldset fix-rules-fieldset" disabled={fixLoading || fixSaving}>
         <legend>Fix rules</legend>
         <div className="form-field">
-          <label htmlFor="fix-rules">Instructions to follow when fixing findings</label>
-          <textarea id="fix-rules" rows={8} value={fixRules} onChange={(event) => setFixRules(event.target.value)} />
+          <label htmlFor="fix-findings-rules">Instructions to follow when fixing findings</label>
+          <textarea id="fix-findings-rules" rows={6} value={findingRules} onChange={(event) => setFindingRules(event.target.value)} />
+        </div>
+        <div className="form-field">
+          <label htmlFor="fix-hotspots-rules">Instructions to follow when fixing hotspots</label>
+          <textarea id="fix-hotspots-rules" rows={6} value={hotspotRules} onChange={(event) => setHotspotRules(event.target.value)} />
         </div>
         <div className="form-actions">
           <button className="setup-submit-button" disabled={fixLoading || fixSaving} onClick={() => void saveFixRules()} type="button">
@@ -819,7 +828,7 @@ function WorkspaceContent(props: WorkspaceViewProps) {
         />
       )
     case 'overview':
-      return <OverviewView analysisId={props.analysisId} status={props.status} summary={props.summary} />
+      return <OverviewView analysisId={props.analysisId} navigate={props.navigate} status={props.status} summary={props.summary} />
     case 'findings':
       return (
         <FindingsView
@@ -842,6 +851,7 @@ function WorkspaceContent(props: WorkspaceViewProps) {
           repositoryUrl={props.analyzedRepositoryUrl}
           analysisId={props.analysisId}
           onSelectPath={props.onSelectPath}
+          llmEnabled={Boolean(props.llmConfiguration?.enabled)}
         />
       )
     case 'files':
@@ -912,43 +922,58 @@ function FindingsView({
   const [filterDialogOpen, setFilterDialogOpen] = useState(false)
   const [selectedIds, setSelectedIds] = useState<Set<string>>(() => new Set())
   const [fixBusy, setFixBusy] = useState(false)
-  const [fixJob, setFixJob] = useState<FixJob | null>(null)
+  const [fixJobs, setFixJobs] = useState<FixJob[]>([])
   const [fixError, setFixError] = useState<string | null>(null)
   const findingIdentity = (finding: AnalysisFinding) => finding.finding_id
     ?? `${finding.analyzer}:${finding.path}:${finding.start_line}:${finding.end_line}:${finding.rule_id}`
+  const filteredFindings = useMemo(() => filterFindings(findings, filters), [findings, filters])
   useEffect(() => {
     setSelectedIds((current) => {
       const valid = new Set(findings.map(findingIdentity))
       return new Set([...current].filter((id) => valid.has(id)))
     })
   }, [findings])
+  useEffect(() => {
+    const visible = new Set(filteredFindings.map(findingIdentity))
+    setSelectedIds((current) => new Set([...current].filter((id) => visible.has(id))))
+  }, [filteredFindings])
   const toggleFindingSelection = (finding: AnalysisFinding) => {
     const id = findingIdentity(finding)
     setSelectedIds((current) => {
       const next = new Set(current)
       if (next.has(id)) next.delete(id)
-      else if (next.size < 10) next.add(id)
+      else next.add(id)
       return next
     })
   }
+  const visibleFindingIds = filteredFindings.map(findingIdentity)
+  const findingSelection = selectionState(visibleFindingIds, selectedIds)
+  const findingMasterRef = useRef<HTMLInputElement>(null)
+  useEffect(() => {
+    if (findingMasterRef.current) findingMasterRef.current.indeterminate = findingSelection.partiallySelected
+  }, [findingSelection.partiallySelected])
+  const toggleAllFindings = () => setSelectedIds((current) => toggleVisibleSelection(visibleFindingIds, current))
   const submitFixes = async () => {
     if (!analysisId || !llmEnabled || selectedIds.size === 0 || typeof createFixJob !== 'function') return
-    setFixBusy(true); setFixError(null); setFixJob(null)
+    setFixBusy(true); setFixError(null); setFixJobs([])
+    const jobs: FixJob[] = []
     try {
-      const job = await createFixJob(analysisId, [...selectedIds])
-      setFixJob(job)
-      if (job.status === 'queued' || job.status === 'running') {
-        let current = job
-        for (let attempt = 0; attempt < 180; attempt += 1) {
-          await new Promise((resolve) => window.setTimeout(resolve, 1000))
-          if (typeof getFixJob !== 'function') break
-          current = await getFixJob(job.job_id)
-          setFixJob(current)
-          if (current.status === 'succeeded' || current.status === 'failed') break
+      for (const batch of chunkSelection([...selectedIds])) {
+        try {
+          let current = await createFixJob(analysisId, batch, 'finding')
+          jobs.push(current); setFixJobs([...jobs])
+          if ((current.status === 'queued' || current.status === 'running') && typeof getFixJob === 'function') {
+            for (let attempt = 0; attempt < 180; attempt += 1) {
+              await new Promise((resolve) => window.setTimeout(resolve, 1000))
+              current = await getFixJob(current.job_id)
+              jobs[jobs.length - 1] = current; setFixJobs([...jobs])
+              if (current.status === 'succeeded' || current.status === 'failed') break
+            }
+          }
+        } catch (batchError) {
+          setFixError(batchError instanceof Error ? batchError.message : 'Unable to fix findings batch.')
         }
       }
-    } catch (error) {
-      setFixError(error instanceof Error ? error.message : 'Unable to fix findings.')
     } finally { setFixBusy(false) }
   }
   const availableTypes = useMemo(
@@ -998,7 +1023,6 @@ function FindingsView({
     })
     downloadMarkdownFile(file)
   }
-  const filteredFindings = filterFindings(findings, filters)
   const counts = severityCounts(filteredFindings)
   const orderedFindings = sortFindings(filteredFindings, sort)
   const canFix = llmEnabled && selectedIds.size > 0 && !fixBusy
@@ -1080,13 +1104,14 @@ function FindingsView({
             </button>
           </div>
         </div>
-        {(fixError || fixJob) && (
-          <p className={fixError || fixJob?.status === 'failed' ? 'error-copy' : 'muted'} role="status">
-            {fixError || fixJob?.error_message || (fixJob?.status === 'succeeded' && fixJob.pull_request_url
-              ? <><a href={fixJob.pull_request_url} rel="noreferrer" target="_blank">Pull Request ready</a></>
-              : `Fix job ${fixJob?.status}.`)}
-          </p>
-        )}
+        {(fixError || fixJobs.length > 0) && <div role="status">
+          {fixError && <p className="error-copy">{fixError}</p>}
+          {fixJobs.map((job) => <p className={job.status === 'failed' ? 'error-copy' : 'muted'} key={job.job_id}>
+            {job.status === 'succeeded' && job.pull_request_url
+              ? <><a href={job.pull_request_url} rel="noreferrer" target="_blank">Pull Request ready</a></>
+              : `Fix job ${job.status}.`}
+          </p>)}
+        </div>}
         <AppliedFilterTags values={[...filters.severities, ...filters.types]} />
         <TableFilterDialog
           onApply={applyFilters}
@@ -1143,7 +1168,15 @@ function FindingsView({
               <caption className="sr-only">Repository findings sorted by {sort.column}</caption>
               <thead>
                 <tr>
-                  <th aria-label="Select" scope="col" />
+                  <th scope="col">
+                    <input
+                      aria-label="Select all visible findings"
+                      checked={findingSelection.allVisibleSelected}
+                      ref={findingMasterRef}
+                      onChange={toggleAllFindings}
+                      type="checkbox"
+                    />
+                  </th>
                   {FINDING_COLUMNS.filter(({ key }) => visibleColumns.includes(key)).map(({ key, label }) => (
                     <th
                       aria-sort={sort.column === key ? (sort.direction === 'asc' ? 'ascending' : 'descending') : 'none'}
@@ -1175,7 +1208,6 @@ function FindingsView({
                         <input
                           aria-label={`Select finding ${finding.rule_id} at ${finding.path}:${finding.start_line}`}
                           checked={selectedIds.has(findingIdentity(finding))}
-                          disabled={!selectedIds.has(findingIdentity(finding)) && selectedIds.size >= 10}
                           onChange={() => toggleFindingSelection(finding)}
                           type="checkbox"
                         />
@@ -1219,10 +1251,12 @@ function FindingsView({
 
 function OverviewView({
   analysisId,
+  navigate,
   status,
   summary,
 }: {
   analysisId: string | null
+  navigate: (view: View) => void
   status: AnalysisStatus | null
   summary: AnalysisSummaryResponse['summary']
 }) {
@@ -1269,13 +1303,15 @@ function OverviewView({
         <span className={`status-badge status-${status}`}>{status || 'idle'}</span>
       </div>
       <div className="metric-grid">
-        {cards.map(([label, value, note]) => (
-          <article className="metric-card" key={label}>
-            <span>{label}</span>
-            <strong>{value}</strong>
-            <small>{note}</small>
-          </article>
-        ))}
+        {cards.map(([label, value, note]) => {
+          const target = label === 'Findings' ? 'findings' : label === 'Risk score' ? 'quality' : null
+          const content = <><span>{label}</span><strong>{value}</strong><small>{note}</small></>
+          return target ? (
+            <button className="metric-card metric-card-link" key={label} onClick={() => navigate(target)} type="button">{content}</button>
+          ) : (
+            <article className="metric-card" key={label}>{content}</article>
+          )
+        })}
       </div>
       <div className="panel">
         <div className="panel-title">
@@ -1553,6 +1589,7 @@ function HotspotsView({
   repositoryUrl,
   analysisId,
   onSelectPath,
+  llmEnabled,
 }: {
   hotspots: FileInsight[]
   status: AnalysisStatus | null
@@ -1560,14 +1597,44 @@ function HotspotsView({
   repositoryUrl: string | null
   analysisId: string | null
   onSelectPath: (path: string) => void
+  llmEnabled: boolean
 }) {
   const [sort, setSort] = useState<HotspotSort>({ column: 'hotspot_score', direction: 'desc' })
   const [filters, setFilters] = useState<HotspotFilters>({ risks: [] })
   const [draftFilters, setDraftFilters] = useState<HotspotFilters>({ risks: [] })
   const [filterDialogOpen, setFilterDialogOpen] = useState(false)
   const [exportBusy, setExportBusy] = useState(false)
+  const [selectedPaths, setSelectedPaths] = useState<Set<string>>(new Set())
+  const [fixBusy, setFixBusy] = useState(false)
+  const [fixJobs, setFixJobs] = useState<FixJob[]>([])
+  const [fixError, setFixError] = useState<string | null>(null)
   const filteredHotspots = useMemo(() => filterHotspots(hotspots, filters), [filters, hotspots])
   const orderedHotspots = useMemo(() => sortHotspots(filteredHotspots, sort), [filteredHotspots, sort])
+  useEffect(() => setSelectedPaths((current) => new Set([...current].filter((id) => hotspots.some((item) => item.path === id)))), [hotspots])
+  useEffect(() => setSelectedPaths((current) => new Set([...current].filter((id) => filteredHotspots.some((item) => item.path === id)))), [filteredHotspots])
+  const visiblePaths = orderedHotspots.map((hotspot) => hotspot.path)
+  const selection = selectionState(visiblePaths, selectedPaths)
+  const masterRef = useRef<HTMLInputElement>(null)
+  useEffect(() => { if (masterRef.current) masterRef.current.indeterminate = selection.partiallySelected }, [selection.partiallySelected])
+  const toggleHotspot = (path: string) => setSelectedPaths((current) => { const next = new Set(current); next.has(path) ? next.delete(path) : next.add(path); return next })
+  const submitHotspotFixes = async () => {
+    if (!analysisId || !llmEnabled || selectedPaths.size === 0 || typeof createFixJob !== 'function') return
+    setFixBusy(true); setFixError(null); setFixJobs([])
+    const jobs: FixJob[] = []
+    try {
+      for (const batch of chunkSelection([...selectedPaths])) {
+        try {
+          let current = await createFixJob(analysisId, batch, 'hotspot'); jobs.push(current); setFixJobs([...jobs])
+          if ((current.status === 'queued' || current.status === 'running') && typeof getFixJob === 'function') {
+            for (let attempt = 0; attempt < 180; attempt += 1) {
+              await new Promise((resolve) => window.setTimeout(resolve, 1000)); current = await getFixJob(current.job_id)
+              jobs[jobs.length - 1] = current; setFixJobs([...jobs]); if (current.status === 'succeeded' || current.status === 'failed') break
+            }
+          }
+        } catch (batchError) { setFixError(batchError instanceof Error ? batchError.message : 'Unable to fix hotspots batch.') }
+      }
+    } finally { setFixBusy(false) }
+  }
   const toggleRisk = (risk: (typeof HOTSPOT_RISKS)[number]) => {
     setDraftFilters((current) => ({
       risks: current.risks.includes(risk) ? current.risks.filter((item) => item !== risk) : [...current.risks, risk],
@@ -1630,6 +1697,7 @@ function HotspotsView({
           </span>
           <div className="table-actions">
             <button className="secondary-button" onClick={openFilterDialog} type="button">Filter</button>
+            <button className="setup-submit-button" disabled={!llmEnabled || selectedPaths.size === 0 || fixBusy} onClick={() => void submitHotspotFixes()} type="button">{fixBusy ? 'Fixing…' : 'Fix Hotspots'}</button>
             <button
               className="secondary-button"
               disabled={orderedHotspots.length === 0 || exportBusy}
@@ -1640,6 +1708,7 @@ function HotspotsView({
             </button>
           </div>
         </div>
+        {(fixError || fixJobs.length > 0) && <div role="status">{fixError && <p className="error-copy">{fixError}</p>}{fixJobs.map((job) => <p className={job.status === 'failed' ? 'error-copy' : 'muted'} key={job.job_id}>{job.status === 'succeeded' && job.pull_request_url ? <a href={job.pull_request_url} rel="noreferrer" target="_blank">Pull Request ready</a> : `Fix job ${job.status}.`}</p>)}</div>}
         <AppliedFilterTags values={filters.risks} />
         <TableFilterDialog
           onApply={applyFilters}
@@ -1677,6 +1746,7 @@ function HotspotsView({
               <caption className="sr-only">Hotspots sorted by {sortLabel}</caption>
               <thead>
                 <tr>
+                  <th scope="col"><input aria-label="Select all visible hotspots" checked={selection.allVisibleSelected} ref={masterRef} onChange={() => setSelectedPaths((current) => toggleVisibleSelection(visiblePaths, current))} type="checkbox" /></th>
                   {HOTSPOT_COLUMNS.map(({ key, label }) => (
                     <th
                       aria-sort={sort.column === key ? (sort.direction === 'asc' ? 'ascending' : 'descending') : 'none'}
@@ -1704,6 +1774,7 @@ function HotspotsView({
               <tbody>
                 {orderedHotspots.map((hotspot) => (
                   <tr key={hotspot.path}>
+                    <td><input aria-label={`Select hotspot ${hotspot.path}`} checked={selectedPaths.has(hotspot.path)} onChange={() => toggleHotspot(hotspot.path)} type="checkbox" /></td>
                     <td>
                       <button
                         className="path-link"

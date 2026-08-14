@@ -15,11 +15,26 @@ class FixJobStatus(StrEnum):
     FAILED = "failed"
 
 
+class FixTargetType(StrEnum):
+    FINDING = "finding"
+    HOTSPOT = "hotspot"
+
+
 @dataclass(frozen=True, slots=True)
 class FixConfiguration:
     workspace_id: str
     rules: str = ""
     updated_at: datetime = field(default_factory=lambda: datetime.now(UTC))
+    finding_rules: str | None = None
+    hotspot_rules: str | None = None
+
+    def __post_init__(self) -> None:
+        # Keep the legacy ``rules`` field as the findings rules for clients that
+        # have not migrated yet.
+        if self.finding_rules is None:
+            object.__setattr__(self, "finding_rules", self.rules)
+        if self.hotspot_rules is None:
+            object.__setattr__(self, "hotspot_rules", "")
 
 
 @dataclass(slots=True)
@@ -28,9 +43,17 @@ class FixJob:
     analysis_id: UUID = field(default_factory=uuid4)
     workspace_id: str = "default"
     finding_ids: tuple[str, ...] = ()
+    target_type: FixTargetType = FixTargetType.FINDING
+    target_ids: tuple[str, ...] = ()
     status: FixJobStatus = FixJobStatus.QUEUED
     branch_name: str | None = None
     pull_request_url: str | None = None
     error_message: str | None = None
     created_at: datetime = field(default_factory=lambda: datetime.now(UTC))
     updated_at: datetime = field(default_factory=lambda: datetime.now(UTC))
+
+    def __post_init__(self) -> None:
+        if not self.target_ids:
+            self.target_ids = tuple(self.finding_ids)
+        if not self.finding_ids and self.target_type is FixTargetType.FINDING:
+            self.finding_ids = tuple(self.target_ids)

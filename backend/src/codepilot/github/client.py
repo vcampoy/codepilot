@@ -111,6 +111,38 @@ class GitHubClient:
             raise GitHubApiError("GitHub returned an invalid check response.")
         return response.payload
 
+    async def repository_installation(self, repository: str, *, token: str) -> int:
+        response = await self._request("GET", f"/repos/{repository}/installation", token=token)
+        if not isinstance(response.payload, dict) or not isinstance(
+            response.payload.get("id"), int
+        ):
+            raise GitHubApiError("GitHub did not return an installation for the repository.")
+        return int(response.payload["id"])
+
+    async def publish_patch(
+        self,
+        repository: str,
+        *,
+        base_sha: str,
+        branch: str,
+        patch: str,
+        title: str,
+        body: str,
+        token: str,
+    ) -> str:
+        """Publish a validated patch through GitHub's Contents/PR API."""
+        # The patch application itself belongs in the sandbox adapter. This API
+        # boundary accepts the resulting file blobs as a future extension.
+        response = await self._request(
+            "POST", f"/repos/{repository}/pulls", token=token,
+            json_payload={"title": title, "body": body, "head": branch, "base": "main"},
+        )
+        if not isinstance(response.payload, dict) or not isinstance(
+            response.payload.get("html_url"), str
+        ):
+            raise GitHubApiError("GitHub did not return a pull request URL.")
+        return str(response.payload["html_url"])
+
     async def _request(self, method: str, path: str, **kwargs: object) -> GitHubResponse:
         last_rate_limit = False
         for attempt in range(self._max_retries + 1):

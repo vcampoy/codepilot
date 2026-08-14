@@ -14,7 +14,8 @@ from codepilot.domain.analysis import (
     AnalysisStatus,
     fingerprint_finding,
 )
-from codepilot.domain.fixes import FixConfiguration, FixJob, FixJobStatus
+from codepilot.domain.fixes import FixConfiguration, FixJob, FixJobStatus, FixTargetType
+from codepilot.domain.insights import FileInsight
 from codepilot.domain.llm_config import LlmConfiguration
 from codepilot.repositories.fixes import FixRepository
 
@@ -25,6 +26,8 @@ class AnalysisFixSource(Protocol):
     async def get_llm_configuration(self, workspace_id: str) -> LlmConfiguration | None: ...
 
     async def get_findings(self, analysis_id: UUID) -> Sequence[AnalysisFinding]: ...
+
+    async def get_file_insights(self, analysis_id: UUID) -> Sequence[FileInsight]: ...
 
 
 class FixValidationError(ValueError):
@@ -59,27 +62,54 @@ class FixService:
             FixConfiguration(workspace_id, rules, self._now())
         )
 
+    async def save_configuration(
+        self, workspace_id: str, *, finding_rules: str, hotspot_rules: str
+    ) -> FixConfiguration:
+        if len(finding_rules) > 32_000 or len(hotspot_rules) > 32_000:
+            raise FixValidationError("Fix rules exceed the maximum size.")
+        return await self._repository.save_configuration(
+            FixConfiguration(
+                workspace_id,
+                finding_rules,
+                self._now(),
+                finding_rules=finding_rules,
+                hotspot_rules=hotspot_rules,
+            )
+        )
+
     async def create_job(
-        self, analysis_id: UUID, finding_ids: Sequence[str], workspace_id: str
+        self,
+        analysis_id: UUID,
+        finding_ids: Sequence[str],
+        workspace_id: str,
+        *,
+        target_type: FixTargetType = FixTargetType.FINDING,
     ) -> FixJob:
         analysis = await self._analysis_repository.get(analysis_id, workspace_id)
-        normalized = self._validate_analysis_and_ids(analysis, finding_ids)
+        normalized = self._validate_analysis_and_ids(analysis, finding_ids, target_type)
         if analysis is None:
             raise FixValidationError("Analysis was not found.")
         await self._validate_llm(workspace_id)
-        findings = await self._analysis_repository.get_findings(analysis_id)
-        valid_ids = {fingerprint_finding(item) for item in findings}
+        if target_type is FixTargetType.HOTSPOT:
+            insights = await self._analysis_repository.get_file_insights(analysis_id)
+            valid_ids = {item.path for item in insights}
+        else:
+            findings = await self._analysis_repository.get_findings(analysis_id)
+            valid_ids = {fingerprint_finding(item) for item in findings}
         if any(item not in valid_ids for item in normalized):
-            raise FixValidationError("One or more findings were not found.")
+            label = "hotspots" if target_type is FixTargetType.HOTSPOT else "findings"
+            raise FixValidationError(f"One or more {label} were not found.")
         self._validate_github_repository(analysis)
-        job = self._build_job(analysis_id, workspace_id, normalized)
+        job = self._build_job(analysis_id, workspace_id, normalized, target_type)
         await self._repository.create_job(job)
         await self._enqueue_job(job)
         return job
 
     @staticmethod
     def _validate_analysis_and_ids(
-        analysis: AnalysisRecord | None, finding_ids: Sequence[str]
+        analysis: AnalysisRecord | None,
+        finding_ids: Sequence[str],
+        target_type: FixTargetType = FixTargetType.FINDING,
     ) -> tuple[str, ...]:
         if analysis is None:
             raise FixValidationError("Analysis was not found.")
@@ -87,9 +117,10 @@ class FixService:
             raise FixValidationError("Analysis must be completed before findings can be fixed.")
         normalized = tuple(str(item).strip() for item in finding_ids)
         if any(not item for item in normalized) or len(set(normalized)) != len(normalized):
-            raise FixValidationError("Finding IDs must be non-empty and unique.")
+            raise FixValidationError("Target IDs must be non-empty and unique.")
         if not 1 <= len(normalized) <= 10:
-            raise FixValidationError("Select between 1 and 10 findings.")
+            label = "hotspots" if target_type is FixTargetType.HOTSPOT else "findings"
+            raise FixValidationError(f"Select between 1 and 10 {label}.")
         return normalized
 
     async def _validate_llm(self, workspace_id: str) -> None:
@@ -103,15 +134,21 @@ class FixService:
             raise FixValidationError("Only GitHub repositories are supported.")
 
     def _build_job(
-        self, analysis_id: UUID, workspace_id: str, finding_ids: tuple[str, ...]
+        self,
+        analysis_id: UUID,
+        workspace_id: str,
+        finding_ids: tuple[str, ...],
+        target_type: FixTargetType = FixTargetType.FINDING,
     ) -> FixJob:
         timestamp = self._now().astimezone(UTC).strftime("%Y-%m-%d-%H-%M-%S")
         now = self._now()
         return FixJob(
             analysis_id=analysis_id,
             workspace_id=workspace_id,
-            finding_ids=finding_ids,
-            branch_name=f"fix-findings-{timestamp}",
+            finding_ids=finding_ids if target_type is FixTargetType.FINDING else (),
+            target_type=target_type,
+            target_ids=finding_ids,
+            branch_name=f"fix-{target_type.value}s-{timestamp}",
             created_at=now,
             updated_at=now,
         )

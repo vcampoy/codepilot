@@ -124,7 +124,10 @@ export interface AnalysisFinding {
 }
 
 export interface FixConfiguration {
-  rules: string
+  /** Legacy alias retained while the API migrates to target-specific rules. */
+  rules?: string
+  finding_rules?: string
+  hotspot_rules?: string
 }
 
 export type FixJobStatus = 'queued' | 'running' | 'succeeded' | 'failed'
@@ -132,7 +135,9 @@ export type FixJobStatus = 'queued' | 'running' | 'succeeded' | 'failed'
 export interface FixJob {
   job_id: string
   analysis_id: string
-  finding_ids: string[]
+  finding_ids?: string[]
+  target_type?: 'finding' | 'hotspot'
+  target_ids?: string[]
   status: FixJobStatus
   branch_name: string | null
   error: string | null
@@ -327,10 +332,19 @@ export function saveFixConfiguration(payload: FixConfiguration): Promise<FixConf
   })
 }
 
-export function createFixJob(analysisId: string, findingIds: readonly string[]): Promise<FixJob> {
+export function createFixJob(
+  analysisId: string,
+  targetIds: readonly string[],
+  targetType: 'finding' | 'hotspot' = 'finding',
+): Promise<FixJob> {
   return request<FixJob>(`/api/v1/analyses/${encodeURIComponent(analysisId)}/fix-jobs`, {
     method: 'POST',
-    body: JSON.stringify({ finding_ids: findingIds }),
+    body: JSON.stringify({
+      target_type: targetType,
+      target_ids: targetIds,
+      // Keep the old field for older API deployments until migration completes.
+      ...(targetType === 'finding' ? { finding_ids: targetIds } : {}),
+    }),
   })
 }
 
