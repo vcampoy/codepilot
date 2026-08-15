@@ -64,7 +64,10 @@ class AnalysisRepository(Protocol):
     """Source-of-truth operations required by the application service."""
 
     async def create(
-        self, repository_url: str, workspace_id: str = "default"
+        self,
+        repository_url: str,
+        workspace_id: str = "default",
+        branch_name: str | None = None,
     ) -> AnalysisRecord: ...
 
     async def get_or_create_project(
@@ -313,12 +316,18 @@ class InMemoryAnalysisRepository:
             self._findings.pop(analysis_id, None)
             self._file_insights.pop(analysis_id, None)
 
-    async def create(self, repository_url: str, workspace_id: str = "default") -> AnalysisRecord:
+    async def create(
+        self,
+        repository_url: str,
+        workspace_id: str = "default",
+        branch_name: str | None = None,
+    ) -> AnalysisRecord:
         async with self._lock:
             project = await self._get_or_create_project_locked(repository_url, workspace_id)
             record = AnalysisRecord(
                 uuid4(),
                 repository_url,
+                branch_name=branch_name,
                 workspace_id=workspace_id,
                 project_id=project.project_id,
                 created_at=_utc_now(),
@@ -621,6 +630,7 @@ def _copy_record(record: AnalysisRecord) -> AnalysisRecord:
     return AnalysisRecord(
         analysis_id=record.analysis_id,
         repository_url=record.repository_url,
+        branch_name=record.branch_name,
         workspace_id=record.workspace_id,
         project_id=record.project_id,
         status=record.status,
@@ -652,6 +662,7 @@ _ANALYSES = Table(
     # SQLAlchemy's Uuid also keeps the table portable for adapter-level tests.
     Column("analysis_id", Uuid(as_uuid=True), primary_key=True),
     Column("repository_url", String(2048), nullable=False),
+    Column("branch_name", String(255)),
     Column("workspace_id", String(64), nullable=False, default="default"),
     Column("project_id", Uuid(as_uuid=True), ForeignKey("codepilot_projects.project_id")),
     Column("created_at", DateTime(timezone=True), nullable=False),
@@ -985,11 +996,17 @@ class PostgresAnalysisRepository:
                 )
             )
 
-    async def create(self, repository_url: str, workspace_id: str = "default") -> AnalysisRecord:
+    async def create(
+        self,
+        repository_url: str,
+        workspace_id: str = "default",
+        branch_name: str | None = None,
+    ) -> AnalysisRecord:
         project = await self.get_or_create_project(repository_url, workspace_id)
         record = AnalysisRecord(
             uuid4(),
             repository_url,
+            branch_name=branch_name,
             workspace_id=workspace_id,
             project_id=project.project_id,
             created_at=_utc_now(),
@@ -999,6 +1016,7 @@ class PostgresAnalysisRepository:
                 insert(_ANALYSES).values(
                     analysis_id=record.analysis_id,
                     repository_url=record.repository_url,
+                    branch_name=record.branch_name,
                     workspace_id=record.workspace_id,
                     project_id=record.project_id,
                     created_at=record.created_at,
@@ -1453,6 +1471,7 @@ def _record_from_row(row: Any) -> AnalysisRecord:
     return AnalysisRecord(
         analysis_id=cast(UUID, row["analysis_id"]),
         repository_url=cast(str, row["repository_url"]),
+        branch_name=cast(str | None, row["branch_name"]),
         workspace_id=cast(str, row["workspace_id"]),
         project_id=cast(UUID | None, row.get("project_id")),
         status=AnalysisStatus(cast(str, row["status"])),

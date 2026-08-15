@@ -14,6 +14,7 @@ export interface Project {
   updated_at: string
 }
 export interface ProjectListResponse { items: Project[]; total: number; limit: number; offset: number }
+export interface RepositoryBranchesResponse { branches: string[]; default_branch: string }
 export interface AnalysisRun {
   analysis_id: string
   project_id: string | null
@@ -197,8 +198,18 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   return (await response.json()) as T
 }
 
-export function createAnalysis(repositoryUrl: string): Promise<AnalysisAccepted> {
+export function createAnalysis(repositoryUrl: string, branchName?: string): Promise<AnalysisAccepted> {
   return request<AnalysisAccepted>('/api/v1/analyses', {
+    method: 'POST',
+    body: JSON.stringify({
+      repository_url: repositoryUrl,
+      ...(branchName ? { branch_name: branchName } : {}),
+    }),
+  })
+}
+
+export function getRepositoryBranches(repositoryUrl: string): Promise<RepositoryBranchesResponse> {
+  return request<RepositoryBranchesResponse>('/api/v1/repositories/branches', {
     method: 'POST',
     body: JSON.stringify({ repository_url: repositoryUrl }),
   })

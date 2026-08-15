@@ -34,13 +34,21 @@ from codepilot.repositories.analysis import (
     PostgresAnalysisRepository,
 )
 from codepilot.services.analysis import AnalysisService
-from codepilot.services.repository_ingestion import RepositorySnapshot
+from codepilot.services.repository_ingestion import RepositoryBranches, RepositorySnapshot
 
 
 @dataclass
 class ApiIngestion:
+    last_branch: str | None = None
+
+    async def list_branches(self, _url: str) -> RepositoryBranches:
+        return RepositoryBranches(("main", "release"), "main")
+
     @asynccontextmanager
-    async def ingest(self, _url: str) -> AsyncIterator[RepositorySnapshot]:
+    async def ingest(
+        self, _url: str, *, branch_name: str | None = None
+    ) -> AsyncIterator[RepositorySnapshot]:
+        self.last_branch = branch_name
         yield RepositorySnapshot(
             repository_path=Path("C:/isolated/repository"),
             commit_sha="b" * 40,
@@ -172,6 +180,32 @@ def test_analysis_request_returns_202_and_status_endpoint_reads_persisted_record
     assert status.status_code == 200
     assert status.json()["analysis_id"] == analysis_id
     assert status.json()["status"] == "queued"
+
+
+def test_analysis_request_persists_selected_branch_and_branch_endpoint_lists_options() -> None:
+    repository, service = make_service()
+    with TestClient(create_app(analysis_service=service)) as client:
+        branches = client.post(
+            "/api/v1/repositories/branches",
+            json={"repository_url": "https://github.com/example/project.git"},
+        )
+        accepted = client.post(
+            "/api/v1/analyses",
+            json={
+                "repository_url": "https://github.com/example/project.git",
+                "branch_name": "release",
+            },
+        )
+        record = asyncio.run(service.get_analysis(UUID(accepted.json()["analysis_id"])))
+        asyncio.run(service.process_analysis(UUID(accepted.json()["analysis_id"])))
+
+    assert branches.status_code == 200
+    assert branches.json() == {"branches": ["main", "release"], "default_branch": "main"}
+    assert accepted.status_code == 202
+    assert record.branch_name == "release"
+    assert isinstance(service._ingestion, ApiIngestion)
+    assert service._ingestion.last_branch == "release"
+    assert repository is not None
 
 
 def test_summary_endpoint_exposes_persisted_metrics_after_worker_completion() -> None:

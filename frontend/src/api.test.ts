@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
   createAnalysis,
+  getRepositoryBranches,
   getAnalysisFileDetail,
   getAnalysisFiles,
   getAnalysisFindings,
@@ -152,6 +153,44 @@ describe('analysis API client', () => {
     await expect(getLlmConfiguration()).resolves.toMatchObject({ provider: 'openai' })
     expect(fetchMock.mock.calls[0][0]).toBe('http://localhost:8000/api/v1/settings/llm')
     expect(fetchMock.mock.calls[0][1]).toMatchObject({ method: 'PUT' })
+  })
+
+  it('loads repository branches and their default branch', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(JSON.stringify({ branches: ['main', 'release'], default_branch: 'main' }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      }),
+    )
+    vi.stubGlobal('fetch', fetchMock)
+
+    await expect(getRepositoryBranches('https://github.com/acme/project')).resolves.toEqual({
+      branches: ['main', 'release'],
+      default_branch: 'main',
+    })
+    expect(fetchMock).toHaveBeenCalledWith(
+      'http://localhost:8000/api/v1/repositories/branches',
+      expect.objectContaining({
+        method: 'POST',
+        body: JSON.stringify({ repository_url: 'https://github.com/acme/project' }),
+      }),
+    )
+  })
+
+  it('includes the selected branch when creating an analysis', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(JSON.stringify({ analysis_id: 'analysis-1', status: 'queued' }), { status: 202 }),
+    )
+    vi.stubGlobal('fetch', fetchMock)
+
+    await createAnalysis('https://github.com/acme/project', 'release')
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      'http://localhost:8000/api/v1/analyses',
+      expect.objectContaining({
+        body: JSON.stringify({ repository_url: 'https://github.com/acme/project', branch_name: 'release' }),
+      }),
+    )
   })
 
   it('reads and saves Fix rules and creates/polls a Fix job', async () => {

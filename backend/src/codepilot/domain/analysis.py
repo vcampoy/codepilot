@@ -170,6 +170,7 @@ class AnalysisRecord:
     analysis_id: UUID
     repository_url: str
     workspace_id: str = "default"
+    branch_name: str | None = None
     project_id: UUID | None = None
     status: AnalysisStatus = AnalysisStatus.QUEUED
     commit_sha: str | None = None

@@ -34,6 +34,7 @@ from codepilot.domain.insights import calculate_repository_risk, select_hotspots
 from codepilot.domain.quality import QualityGatePolicy
 from codepilot.repositories.analysis import AnalysisRepository
 from codepilot.services.repository_ingestion import (
+    RepositoryBranches,
     RepositoryCleanupError,
     RepositoryIngestionError,
     RepositoryProcessTerminationError,
@@ -107,6 +108,16 @@ class RepositoryIngestion(Protocol):
     def ingest(self, url: str) -> AbstractAsyncContextManager[RepositorySnapshot]: ...
 
 
+class BranchRepositoryIngestion(RepositoryIngestion, Protocol):
+    """Optional extension used by branch-aware repository flows."""
+
+    def ingest(
+        self, url: str, *, branch_name: str | None = None
+    ) -> AbstractAsyncContextManager[RepositorySnapshot]: ...
+
+    async def list_branches(self, url: str) -> RepositoryBranches: ...
+
+
 class Analyzer(Protocol):
     """Future analyzer plugin boundary; no plugin is implemented here."""
 
@@ -140,10 +151,13 @@ class AnalysisService:
         self._quality_gate_config = quality_gate_config or QualityGateConfig()
 
     async def request_analysis(
-        self, repository_url: str, workspace_id: str = "default"
+        self,
+        repository_url: str,
+        workspace_id: str = "default",
+        branch_name: str | None = None,
     ) -> AnalysisRecord:
         """Persist a queued request before publishing its identifier."""
-        record = await self._repository.create(repository_url, workspace_id)
+        record = await self._repository.create(repository_url, workspace_id, branch_name)
         try:
             self._queue.enqueue(record.analysis_id)
         except Exception as error:
@@ -162,6 +176,11 @@ class AnalysisService:
                 )
             raise AnalysisEnqueueError from error
         return record
+
+    async def list_repository_branches(self, repository_url: str) -> RepositoryBranches:
+        """Discover branches through the same validated ingestion boundary."""
+        ingestion = cast(BranchRepositoryIngestion, self._ingestion)
+        return await ingestion.list_branches(repository_url)
 
     async def get_analysis(
         self, analysis_id: UUID, workspace_id: str | None = None
@@ -281,7 +300,16 @@ class AnalysisService:
         started = time.perf_counter()
         completed = False
         try:
-            async with self._ingestion.ingest(record.repository_url) as snapshot:
+            branch_ingestion = cast(BranchRepositoryIngestion, self._ingestion)
+            ingestion = (
+                branch_ingestion.ingest(
+                    record.repository_url,
+                    branch_name=record.branch_name,
+                )
+                if record.branch_name
+                else self._ingestion.ingest(record.repository_url)
+            )
+            async with ingestion as snapshot:
                 result = await self._analyze_snapshot(snapshot)
                 summary = await self._persist_and_summarize(
                     analysis_id, record, lease_token, result, started

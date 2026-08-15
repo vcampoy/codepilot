@@ -15,6 +15,7 @@ import codepilot.services.repository_ingestion as ingestion
 from codepilot.services.repository_ingestion import (
     IngestionLimits,
     PrivateRepositoryTargetError,
+    RepositoryBranches,
     RepositoryCancelledError,
     RepositoryFileCountLimitError,
     RepositoryIngestionError,
@@ -73,6 +74,7 @@ class _LocalGitClient:
         self._source_path = source_path
         self._failure = failure
         self.last_target: ValidatedRepositoryTarget | None = None
+        self.last_branch: str | None = None
 
     async def clone(
         self,
@@ -83,15 +85,26 @@ class _LocalGitClient:
         _max_file_count: int,
         cancellation_event: asyncio.Event | None,
         _monitor_interval_seconds: float = 0.05,
+        branch_name: str | None = None,
     ) -> None:
         self.last_target = target
+        self.last_branch = branch_name
         if cancellation_event is not None and cancellation_event.is_set():
             raise RepositoryCancelledError()
         if self._failure is not None:
             raise self._failure
         await asyncio.to_thread(
             subprocess.run,  # nosec B603, B607
-            ["git", "clone", "--depth", "1", "--no-tags", str(self._source_path), str(destination)],
+            [
+                "git",
+                "clone",
+                "--depth",
+                "1",
+                "--no-tags",
+                *(["--branch", branch_name] if branch_name else []),
+                str(self._source_path),
+                str(destination),
+            ],
             check=True,
             capture_output=True,
             text=True,
@@ -132,6 +145,13 @@ class _LocalGitClient:
         if completed.returncode != 0:
             return None
         return completed.stdout.strip().removeprefix("origin/") or None
+
+    async def list_branches(
+        self,
+        _target: ValidatedRepositoryTarget,
+        _cancellation_event: asyncio.Event | None = None,
+    ) -> RepositoryBranches:
+        return RepositoryBranches(("main", "feature/branch"), "main")
 
 
 def _service(
@@ -179,6 +199,57 @@ def test_ingests_local_fixture_through_validated_public_url_and_cleans_up(tmp_pa
         assert all(not directory.exists() for directory in created_directories)
 
     asyncio.run(scenario())
+
+
+def test_ingests_requested_branch(tmp_path: Path) -> None:
+    source_path = tmp_path / "source"
+    source_path.mkdir()
+    _create_local_git_repository(source_path)
+    subprocess.run(  # nosec B603, B607
+        ["git", "-C", str(source_path), "branch", "feature/branch"], check=True
+    )
+    client = _LocalGitClient(source_path)
+    service = RepositoryIngestionService(
+        git_client=client,
+        resolve_addresses=lambda _hostname: ["93.184.216.34"],
+    )
+
+    async def scenario() -> None:
+        async with service.ingest(_PUBLIC_TEST_URL, branch_name="feature/branch") as result:
+            assert result.commit_sha
+        assert client.last_branch == "feature/branch"
+
+    asyncio.run(scenario())
+
+
+def test_lists_repository_branches_and_resolves_default_branch(tmp_path: Path) -> None:
+    source_path = tmp_path / "source"
+    source_path.mkdir()
+    service, _created_directories = _service(source_path)
+
+    async def scenario() -> None:
+        result = await service.list_branches(_PUBLIC_TEST_URL)
+        assert result.branches == ("main", "feature/branch")
+        assert result.default_branch == "main"
+
+    asyncio.run(scenario())
+
+
+def test_parses_remote_branch_metadata_and_falls_back_to_main() -> None:
+    result = ingestion._parse_remote_branches(
+        "\n".join(
+            (
+                "ref: refs/heads/release HEAD",
+                "a refs/heads/main",
+                "b refs/heads/release",
+                "c refs/tags/v1",
+            )
+        )
+    )
+    fallback = ingestion._parse_remote_branches("a refs/heads/main\nb refs/heads/feature/x")
+
+    assert result == RepositoryBranches(("main", "release"), "release")
+    assert fallback.default_branch == "main"
 
 
 @pytest.mark.parametrize(

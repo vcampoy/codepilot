@@ -44,6 +44,7 @@ class AnalysisRequest(BaseModel):
     """Public analysis request payload."""
 
     repository_url: str = Field(min_length=1, max_length=2048)
+    branch_name: str | None = Field(default=None, min_length=1, max_length=255)
 
 
 class AnalysisAcceptedResponse(BaseModel):
@@ -167,7 +168,11 @@ async def request_analysis(payload: AnalysisRequest, request: Request) -> Analys
             status_code=429,
         )
     try:
-        record = await service.request_analysis(payload.repository_url, identity.workspace_id)
+        record = await service.request_analysis(
+            payload.repository_url,
+            identity.workspace_id,
+            payload.branch_name,
+        )
     except AnalysisEnqueueError as error:
         raise ApplicationError(
             "analysis_enqueue_failed",

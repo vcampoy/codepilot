@@ -27,6 +27,7 @@ const LLM_PROVIDERS = vi.hoisted(() => [
 
 const fixtures = vi.hoisted(() => ({
   createAnalysis: vi.fn(),
+  getRepositoryBranches: vi.fn(),
   getAnalysisStatus: vi.fn(),
   getAnalysisSummary: vi.fn(),
   getAnalysisFindings: vi.fn(),
@@ -205,6 +206,7 @@ beforeEach(() => {
   window.location.hash = ''
   Object.values(fixtures).forEach((mock) => mock.mockReset())
   fixtures.getProjects.mockResolvedValue(emptyProjectCatalog)
+  fixtures.getRepositoryBranches.mockResolvedValue({ branches: ['main', 'release'], default_branch: 'main' })
   fixtures.getAnalysisHistory.mockResolvedValue({ items: [], total: 0, limit: 20, offset: 0 })
   fixtures.getLlmConfiguration.mockResolvedValue(DEFAULT_LLM_CONFIGURATION)
   fixtures.getLlmProviders.mockResolvedValue({ providers: LLM_PROVIDERS })
@@ -212,6 +214,90 @@ beforeEach(() => {
 })
 
 afterEach(() => cleanup())
+
+it('loads branches on repository blur and submits the selected branch', async () => {
+  fixtures.createAnalysis.mockResolvedValue({ analysis_id: 'analysis-1', status: 'queued' })
+
+  render(<App />)
+
+  const repositoryInput = screen.getByLabelText('Repository URL')
+  fireEvent.change(repositoryInput, { target: { value: 'https://github.com/acme/demo' } })
+  fireEvent.blur(repositoryInput)
+
+  const branchSelect = await screen.findByRole('combobox', { name: 'Branch' })
+  expect(branchSelect).toHaveValue('main')
+  fireEvent.change(branchSelect, { target: { value: 'release' } })
+  fireEvent.submit(repositoryInput.closest('form')!, { preventDefault: () => undefined })
+
+  await waitFor(() => expect(fixtures.createAnalysis).toHaveBeenCalledWith(
+    'https://github.com/acme/demo',
+    'release',
+  ))
+  expect(fixtures.getRepositoryBranches).toHaveBeenCalledWith('https://github.com/acme/demo')
+})
+
+it('uses the remote default branch when submitting before branch discovery finishes', async () => {
+  fixtures.createAnalysis.mockResolvedValue({ analysis_id: 'analysis-1', status: 'queued' })
+  fixtures.getRepositoryBranches.mockResolvedValue({ branches: ['main', 'release'], default_branch: 'release' })
+
+  render(<App />)
+  const repositoryInput = screen.getByLabelText('Repository URL')
+  fireEvent.change(repositoryInput, { target: { value: ' https://github.com/acme/demo ' } })
+  fireEvent.submit(repositoryInput.closest('form')!, { preventDefault: () => undefined })
+
+  await waitFor(() => expect(fixtures.createAnalysis).toHaveBeenCalledWith(
+    'https://github.com/acme/demo',
+    'release',
+  ))
+})
+
+it('shows branch discovery loading and error states and clears stale options', async () => {
+  const pending = deferred<{ branches: string[]; default_branch: string }>()
+  fixtures.getRepositoryBranches
+    .mockReturnValueOnce(pending.promise)
+    .mockRejectedValueOnce('Branch lookup failed.')
+    .mockRejectedValueOnce(new Error('Branch lookup failed.'))
+
+  render(<App />)
+  const repositoryInput = screen.getByLabelText('Repository URL')
+  expect(screen.queryByRole('combobox', { name: 'Branch' })).not.toBeInTheDocument()
+  fireEvent.change(repositoryInput, { target: { value: 'https://github.com/acme/demo' } })
+  fireEvent.blur(repositoryInput)
+
+  const loadingSelect = await screen.findByRole('combobox', { name: 'Branch' })
+  expect(loadingSelect).toBeDisabled()
+  pending.resolve({ branches: ['main', 'release'], default_branch: 'main' })
+  expect(await screen.findByRole('option', { name: 'release' })).toBeInTheDocument()
+  expect(loadingSelect).not.toBeDisabled()
+
+  fireEvent.blur(repositoryInput)
+  await waitFor(() => expect(screen.queryByRole('combobox', { name: 'Branch' })).not.toBeInTheDocument())
+
+  fireEvent.change(repositoryInput, { target: { value: 'https://github.com/acme/other' } })
+  expect(screen.queryByRole('combobox', { name: 'Branch' })).not.toBeInTheDocument()
+  fireEvent.blur(repositoryInput)
+  expect(await screen.findByText('Branch lookup failed.')).toBeInTheDocument()
+})
+
+it('ignores a stale branch response after the repository URL changes', async () => {
+  const firstLookup = deferred<{ branches: string[]; default_branch: string }>()
+  fixtures.getRepositoryBranches
+    .mockReturnValueOnce(firstLookup.promise)
+    .mockResolvedValueOnce({ branches: ['develop'], default_branch: 'develop' })
+
+  render(<App />)
+  const repositoryInput = screen.getByLabelText('Repository URL')
+  fireEvent.change(repositoryInput, { target: { value: 'https://github.com/acme/first' } })
+  fireEvent.blur(repositoryInput)
+  fireEvent.change(repositoryInput, { target: { value: 'https://github.com/acme/second' } })
+  fireEvent.blur(repositoryInput)
+
+  const branchSelect = await screen.findByRole('combobox', { name: 'Branch' })
+  expect(branchSelect).toHaveValue('develop')
+  firstLookup.resolve({ branches: ['stale'], default_branch: 'stale' })
+  await waitFor(() => expect(screen.queryByRole('option', { name: 'stale' })).not.toBeInTheDocument())
+  expect(branchSelect).toHaveValue('develop')
+})
 
 describe('analysis history and quality KPI', () => {
   it('renders persisted repositories immediately on page load', async () => {

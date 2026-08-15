@@ -181,6 +181,14 @@ class RepositorySnapshot:
     source_size_bytes: int
 
 
+@dataclass(frozen=True, slots=True)
+class RepositoryBranches:
+    """Remote branch names and the branch selected by the remote default ref."""
+
+    branches: tuple[str, ...]
+    default_branch: str
+
+
 class GitClient(Protocol):
     """Git operations required by the ingestion service."""
 
@@ -193,6 +201,7 @@ class GitClient(Protocol):
         max_file_count: int,
         cancellation_event: asyncio.Event | None,
         monitor_interval_seconds: float = 0.05,
+        branch_name: str | None = None,
     ) -> None: ...
 
     async def resolve_commit_sha(
@@ -206,6 +215,12 @@ class GitClient(Protocol):
         repository_path: Path,
         cancellation_event: asyncio.Event | None = None,
     ) -> str | None: ...
+
+    async def list_branches(
+        self,
+        target: ValidatedRepositoryTarget,
+        cancellation_event: asyncio.Event | None = None,
+    ) -> RepositoryBranches: ...
 
 
 _IGNORED_DIRECTORY_NAMES: Final = frozenset(
@@ -499,6 +514,39 @@ def _validate_commit_sha(commit_sha: str) -> str:
     return normalized
 
 
+def _parse_remote_branches(output: str) -> RepositoryBranches:
+    parsed_lines = tuple(_parse_remote_branch_line(line) for line in output.splitlines())
+    branches = {branch for branch, _default_ref in parsed_lines if branch}
+    default_ref = next((default_ref for _branch, default_ref in parsed_lines if default_ref), None)
+    ordered = tuple(sorted(branches))
+    if not ordered:
+        raise RepositoryMetadataError("Repository has no remote branches.")
+    return RepositoryBranches(ordered, _select_default_branch(default_ref, branches, ordered))
+
+
+def _parse_remote_branch_line(line: str) -> tuple[str | None, str | None]:
+    fields = line.split()
+    if len(fields) >= 3 and fields[0] == "ref:" and fields[2] == "HEAD":
+        return None, fields[1]
+    if len(fields) < 2:
+        return None, None
+    branch = _branch_name_from_ref(fields[-1])
+    return (branch or None), None
+
+
+def _branch_name_from_ref(ref: str) -> str:
+    return ref.removeprefix("refs/heads/") if ref.startswith("refs/heads/") else ""
+
+
+def _select_default_branch(
+    default_ref: str | None, branches: set[str], ordered: tuple[str, ...]
+) -> str:
+    candidate = default_ref.removeprefix("refs/heads/") if default_ref else ""
+    if candidate in branches:
+        return candidate
+    return next((name for name in ("main", "master") if name in branches), ordered[0])
+
+
 def _safe_process_environment() -> dict[str, str]:
     environment = os.environ.copy()
     for variable in list(environment):
@@ -543,6 +591,7 @@ class SubprocessGitClient:
         max_file_count: int,
         cancellation_event: asyncio.Event | None,
         monitor_interval_seconds: float = 0.05,
+        branch_name: str | None = None,
     ) -> None:
         if monitor_interval_seconds <= 0:
             raise ValueError("monitor_interval_seconds must be positive")
@@ -563,6 +612,7 @@ class SubprocessGitClient:
                 "1",
                 "--no-tags",
                 "--single-branch",
+                *(["--branch", branch_name] if branch_name else []),
                 "--no-recurse-submodules",
                 target.url,
                 str(destination),
@@ -615,6 +665,25 @@ class SubprocessGitClient:
             cancellation_event=cancellation_event,
         )
         return current_branch.strip() or None
+
+    async def list_branches(
+        self,
+        target: ValidatedRepositoryTarget,
+        cancellation_event: asyncio.Event | None = None,
+    ) -> RepositoryBranches:
+        arguments = self._command(
+            "-c",
+            "protocol.file.allow=never",
+            "-c",
+            "http.followRedirects=false",
+            "-c",
+            "http.sslVerify=true",
+        )
+        for address in target.addresses:
+            arguments.extend(["-c", f"http.curloptResolve={target.hostname}:443:{address}"])
+        arguments.extend(["ls-remote", "--symref", target.url, "HEAD", "refs/heads/*"])
+        output = await self._run_metadata_command(arguments, cancellation_event=cancellation_event)
+        return _parse_remote_branches(output)
 
     async def _wait_for_metadata_output(
         self,
@@ -935,6 +1004,7 @@ class RepositoryIngestionService:
         self,
         url: str,
         *,
+        branch_name: str | None = None,
         cancellation_event: asyncio.Event | None = None,
     ) -> AsyncIterator[RepositorySnapshot]:
         """Yield an inspected checkout and remove it when the context exits."""
@@ -957,6 +1027,7 @@ class RepositoryIngestionService:
                         self._limits.max_file_count,
                         cancellation_event,
                         self._limits.monitor_interval_seconds,
+                        branch_name,
                     )
                     if cancellation_event is not None and cancellation_event.is_set():
                         raise RepositoryCancelledError()
@@ -994,6 +1065,18 @@ class RepositoryIngestionService:
                 await asyncio.to_thread(_remove_workspace, workspace)
             except OSError as error:
                 raise RepositoryCleanupError() from error
+
+    async def list_branches(
+        self,
+        url: str,
+        *,
+        cancellation_event: asyncio.Event | None = None,
+    ) -> RepositoryBranches:
+        """Discover safe remote branches without creating a checkout."""
+        target = await self._url_validator.validate(url)
+        if cancellation_event is not None and cancellation_event.is_set():
+            raise RepositoryCancelledError()
+        return await self._git_client.list_branches(target, cancellation_event)
 
 
 def _remove_readonly(function: Callable[..., object], path: str, _error: object) -> None:

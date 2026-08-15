@@ -4,6 +4,7 @@ import { useId } from 'react'
 import {
   apiDocsUrl,
   createAnalysis,
+  getRepositoryBranches,
   getAnalysisStatus,
   getAnalysisSummary,
   getAnalysisFindings,
@@ -178,6 +179,12 @@ function RepositoriesView({
 function App() {
   const [view, setView] = useState<View>(viewFromHash)
   const [repositoryUrl, setRepositoryUrl] = useState('')
+  const [repositoryBranches, setRepositoryBranches] = useState<string[]>([])
+  const [branchName, setBranchName] = useState('')
+  const [branchUrl, setBranchUrl] = useState<string | null>(null)
+  const [branchesBusy, setBranchesBusy] = useState(false)
+  const [branchesError, setBranchesError] = useState<string | null>(null)
+  const branchesRequestId = useRef(0)
   const [analyzedRepositoryUrl, setAnalyzedRepositoryUrl] = useState<string | null>(null)
   const [analysisId, setAnalysisId] = useState<string | null>(null)
   const [status, setStatus] = useState<AnalysisStatus | null>(null)
@@ -386,13 +393,57 @@ function App() {
     setView(next)
   }
 
+  const onRepositoryUrlChange = (value: string) => {
+    branchesRequestId.current += 1
+    setRepositoryUrl(value)
+    setRepositoryBranches([])
+    setBranchName('')
+    setBranchUrl(null)
+    setBranchesError(null)
+  }
+
+  const loadRepositoryBranches = async () => {
+    const url = repositoryUrl.trim()
+    if (!url) return
+    const requestId = ++branchesRequestId.current
+    setBranchesBusy(true)
+    setBranchesError(null)
+    try {
+      const result = await getRepositoryBranches(url)
+      if (requestId !== branchesRequestId.current) return
+      setRepositoryBranches(result.branches)
+      setBranchName(result.default_branch)
+      setBranchUrl(url)
+    } catch (branchLoadError) {
+      if (requestId !== branchesRequestId.current) return
+      setRepositoryBranches([])
+      setBranchName('')
+      setBranchUrl(null)
+      setBranchesError(
+        branchLoadError instanceof Error ? branchLoadError.message : 'Could not load repository branches.',
+      )
+    } finally {
+      if (requestId === branchesRequestId.current) {
+        setBranchesBusy(false)
+      }
+    }
+  }
+
   const submitRepository = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault()
     setBusy(true)
     setError(null)
     try {
       const submittedRepositoryUrl = repositoryUrl.trim()
-      const accepted = await createAnalysis(submittedRepositoryUrl)
+      let selectedBranch = branchName
+      if (submittedRepositoryUrl && (branchUrl !== submittedRepositoryUrl || !selectedBranch)) {
+        const result = await getRepositoryBranches(submittedRepositoryUrl)
+        setRepositoryBranches(result.branches)
+        selectedBranch = result.default_branch
+        setBranchName(selectedBranch)
+        setBranchUrl(submittedRepositoryUrl)
+      }
+      const accepted = await createAnalysis(submittedRepositoryUrl, selectedBranch || undefined)
       void refreshCatalogs()
       setAnalyzedRepositoryUrl(submittedRepositoryUrl)
       setAnalysisId(accepted.analysis_id)
@@ -478,7 +529,13 @@ function App() {
           await refreshCatalogs()
           return result
         }}
-        onRepositoryUrlChange={setRepositoryUrl}
+        onRepositoryUrlChange={onRepositoryUrlChange}
+        onRepositoryUrlBlur={loadRepositoryBranches}
+        branches={repositoryBranches}
+        branchName={branchName}
+        branchesBusy={branchesBusy}
+        branchesError={branchesError}
+        onBranchNameChange={setBranchName}
         onSelectRun={(run) => {
           setAnalysisId(run.analysis_id)
           setAnalyzedRepositoryUrl(run.repository_url)
@@ -540,6 +597,12 @@ type WorkspaceViewProps = {
   navigate: (view: View) => void
   onDelete: (analysisIds: readonly string[]) => Promise<AnalysisDeletionResult>
   onRepositoryUrlChange: (value: string) => void
+  onRepositoryUrlBlur: () => void | Promise<void>
+  branches: readonly string[]
+  branchName: string
+  branchesBusy: boolean
+  branchesError: string | null
+  onBranchNameChange: (value: string) => void
   onSelectPath: (path: string) => void
   onSelectRun: (run: AnalysisHistoryItem) => void
   onSubmitRepository: (event: FormEvent<HTMLFormElement>) => void | Promise<void>
@@ -583,6 +646,12 @@ function WorkspaceView({
   navigate,
   onDelete,
   onRepositoryUrlChange,
+  onRepositoryUrlBlur,
+  branches,
+  branchName,
+  branchesBusy,
+  branchesError,
+  onBranchNameChange,
   onSelectPath,
   onSelectRun,
   onSubmitRepository,
@@ -637,6 +706,12 @@ function WorkspaceView({
         navigate,
         onDelete,
         onRepositoryUrlChange,
+        onRepositoryUrlBlur,
+        branches,
+        branchName,
+        branchesBusy,
+        branchesError,
+        onBranchNameChange,
         onSelectPath,
         onSelectRun,
         onSubmitRepository,
@@ -801,6 +876,7 @@ function WorkspaceContent(props: WorkspaceViewProps) {
                   <input
                     id="repository-url"
                     onChange={(event) => props.onRepositoryUrlChange(event.target.value)}
+                    onBlur={() => void props.onRepositoryUrlBlur()}
                     placeholder="https://github.com/org/project"
                     required
                     type="url"
@@ -810,6 +886,21 @@ function WorkspaceContent(props: WorkspaceViewProps) {
                     disabled={props.busy}
                     type="submit">{props.busy ? 'Queueing...' : 'Analyze repository'}</button>
                 </div>
+                {(props.branchesBusy || props.branches.length > 0) && (
+                  <div className="form-field">
+                    <label htmlFor="repository-branch">Branch</label>
+                    <select
+                      disabled={props.branchesBusy || props.busy}
+                      id="repository-branch"
+                      onChange={(event) => props.onBranchNameChange(event.target.value)}
+                      value={props.branchName}
+                    >
+                      {props.branchesBusy ? <option value="">Loading branches...</option> : null}
+                      {props.branches.map((branch) => <option key={branch} value={branch}>{branch}</option>)}
+                    </select>
+                  </div>
+                )}
+                {props.branchesError && <p className="error-copy" role="alert">{props.branchesError}</p>}
                 <small>Public HTTPS Git repositories only. No credentials or repository code are executed.</small>
               </form>
             </div>
