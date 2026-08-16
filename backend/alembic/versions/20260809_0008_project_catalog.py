@@ -26,7 +26,10 @@ def upgrade() -> None:
         sa.PrimaryKeyConstraint("project_id"),
         sa.UniqueConstraint("workspace_id", "repository_key", name="uq_codepilot_project_identity"),
     )
-    op.add_column("codepilot_analyses", sa.Column("project_id", postgresql.UUID(as_uuid=True), nullable=True))
+    op.add_column(
+        "codepilot_analyses",
+        sa.Column("project_id", postgresql.UUID(as_uuid=True), nullable=True),
+    )
     op.create_foreign_key(
         "fk_analysis_project",
         "codepilot_analyses",

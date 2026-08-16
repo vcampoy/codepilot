@@ -1,11 +1,15 @@
 """Add Fix Findings configuration and job persistence."""
+
 from collections.abc import Sequence
+
 import sqlalchemy as sa
 from alembic import op
+
 revision = "20260813_0013"
 down_revision = "20260811_0012"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
+
 
 def upgrade() -> None:
     op.create_table(
@@ -27,10 +31,13 @@ def upgrade() -> None:
         sa.Column("error_message", sa.String(length=512), nullable=True),
         sa.Column("created_at", sa.DateTime(timezone=True), nullable=False),
         sa.Column("updated_at", sa.DateTime(timezone=True), nullable=False),
-        sa.ForeignKeyConstraint(["analysis_id"], ["codepilot_analyses.analysis_id"], ondelete="CASCADE"),
+        sa.ForeignKeyConstraint(
+            ["analysis_id"], ["codepilot_analyses.analysis_id"], ondelete="CASCADE"
+        ),
         sa.PrimaryKeyConstraint("job_id"),
     )
     op.create_index("ix_codepilot_fix_jobs_workspace", "codepilot_fix_jobs", ["workspace_id"])
+
 
 def downgrade() -> None:
     op.drop_index("ix_codepilot_fix_jobs_workspace", table_name="codepilot_fix_jobs")
