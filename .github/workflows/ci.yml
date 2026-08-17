@@ -16,7 +16,7 @@ jobs:
         working-directory: backend
     steps:
       - name: Check out repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
@@ -44,11 +44,11 @@ jobs:
         working-directory: frontend
     steps:
       - name: Check out repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
       - name: Set up Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v7
         with:
-          node-version: 22
+          node-version: 26
           cache: npm
           cache-dependency-path: frontend/package-lock.json
       - name: Install dependencies
@@ -65,13 +65,15 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Check out repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
       - name: Start the Compose stack
         run: docker compose up --build --wait --wait-timeout 120
       - name: Check API health
         run: curl --fail --retry 10 --retry-delay 2 --retry-connrefused http://localhost:8000/health
       - name: Check repository-ingestion runtime
         run: docker compose exec -T worker sh -c 'git --version && ruff --version && bandit --version && radon --version && eslint --version && test -r /etc/ssl/certs/ca-certificates.crt'
+      - name: Check API repository metadata runtime
+        run: docker compose exec -T api sh -c 'git --version && test -r /etc/ssl/certs/ca-certificates.crt'
       - name: Check frontend root
         run: curl --fail --retry 10 --retry-delay 2 --retry-connrefused http://localhost:5173/
       - name: Check frontend SPA fallback

@@ -9,6 +9,10 @@ WORKDIR /app
 RUN addgroup --system codepilot \
     && adduser --system --ingroup codepilot codepilot
 
+RUN apt-get update \
+    && apt-get install --no-install-recommends -y ca-certificates git \
+    && rm -rf /var/lib/apt/lists/*
+
 COPY pyproject.toml ./
 COPY alembic.ini ./
 COPY alembic ./alembic
@@ -27,7 +31,7 @@ CMD ["uvicorn", "codepilot.main:app", "--host", "0.0.0.0", "--port", "8000"]
 FROM base AS worker
 
 RUN apt-get update \
-    && apt-get install --no-install-recommends -y ca-certificates git nodejs npm \
+    && apt-get install --no-install-recommends -y nodejs npm \
     && rm -rf /var/lib/apt/lists/*
 
 RUN pip install --no-cache-dir ".[analysis]"
