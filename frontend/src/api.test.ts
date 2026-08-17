@@ -218,4 +218,18 @@ describe('analysis API client', () => {
       'http://localhost:8000/api/v1/fix-jobs/job-1',
     ])
   })
+
+  it('round-trips the configurable Findings limit without changing the legacy rules fields', async () => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(new Response(JSON.stringify({ rules: 'Run tests first', max_findings_per_fix: 10 }), { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ rules: 'Use TDD', max_findings_per_fix: 4 }), { status: 200 }))
+    vi.stubGlobal('fetch', fetchMock)
+
+    await expect(getFixConfiguration()).resolves.toEqual({ rules: 'Run tests first', max_findings_per_fix: 10 })
+    await expect(saveFixConfiguration({ rules: 'Use TDD', max_findings_per_fix: 4 })).resolves.toEqual({ rules: 'Use TDD', max_findings_per_fix: 4 })
+    expect(fetchMock.mock.calls[1][1]).toMatchObject({
+      method: 'PUT',
+      body: JSON.stringify({ rules: 'Use TDD', max_findings_per_fix: 4 }),
+    })
+  })
 })

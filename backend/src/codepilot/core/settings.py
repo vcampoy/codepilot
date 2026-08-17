@@ -62,6 +62,9 @@ class Settings(BaseSettings):
     github_webhook_secret: SecretStr | None = None
     github_api_base_url: str = "https://api.github.com"
     github_max_retries: Annotated[int, Field(ge=0, le=5)] = 3
+    fix_execution_enabled: bool = False
+    fix_sandbox_url: str | None = None
+    fix_sandbox_timeout_seconds: Annotated[int, Field(gt=0, le=900)] = 300
     auth_required: bool = False
     auth_api_key: SecretStr | None = None
     rate_limit_requests: Annotated[int, Field(gt=0, le=100_000)] = 120

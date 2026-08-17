@@ -48,6 +48,7 @@ analysis = [
     "ruff>=0.9,<1",
     "bandit>=1.8,<2",
     "radon>=6,<7",
+    "pytest>=9,<10",
 ]
 
 [tool.setuptools.packages.find]

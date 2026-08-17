@@ -8,7 +8,20 @@ from datetime import UTC, datetime
 from typing import Any, Protocol, cast
 from uuid import UUID
 
-from sqlalchemy import JSON, Column, DateTime, MetaData, String, Table, Text, Uuid, select, update
+from sqlalchemy import (
+    JSON,
+    CheckConstraint,
+    Column,
+    DateTime,
+    Integer,
+    MetaData,
+    String,
+    Table,
+    Text,
+    Uuid,
+    select,
+    update,
+)
 from sqlalchemy.dialects.postgresql import insert as postgresql_insert
 from sqlalchemy.ext.asyncio import AsyncEngine, create_async_engine
 
@@ -30,6 +43,7 @@ class FixRepository(Protocol):
         pull_request_url: str | None = None,
         branch_name: str | None = None,
     ) -> FixJob | None: ...
+    async def claim_job(self, job_id: UUID, workspace_id: str) -> FixJob | None: ...
 
 
 class InMemoryFixRepository:
@@ -84,6 +98,21 @@ class InMemoryFixRepository:
             self._jobs[job_id] = updated
             return replace(updated)
 
+    async def claim_job(self, job_id: UUID, workspace_id: str) -> FixJob | None:
+        async with self._lock:
+            current = self._jobs.get(job_id)
+            if current is None or current.workspace_id != workspace_id:
+                return None
+            if current.status is not FixJobStatus.QUEUED:
+                return None
+            updated = replace(
+                current,
+                status=FixJobStatus.RUNNING,
+                updated_at=datetime.now(UTC),
+            )
+            self._jobs[job_id] = updated
+            return replace(updated)
+
 
 _METADATA = MetaData()
 _FIX_CONFIGURATIONS = Table(
@@ -93,7 +122,9 @@ _FIX_CONFIGURATIONS = Table(
     Column("rules", Text, nullable=False),
     Column("finding_rules", Text, nullable=False, server_default=""),
     Column("hotspot_rules", Text, nullable=False, server_default=""),
+    Column("max_findings_per_fix", Integer, nullable=False, server_default="10"),
     Column("updated_at", DateTime(timezone=True), nullable=False),
+    CheckConstraint("max_findings_per_fix BETWEEN 1 AND 10", name="ck_fix_max_findings_per_fix"),
 )
 _FIX_JOBS = Table(
     "codepilot_fix_jobs",
@@ -143,6 +174,7 @@ class PostgresFixRepository:
                     "rules": configuration.rules,
                     "finding_rules": configuration.finding_rules or configuration.rules,
                     "hotspot_rules": configuration.hotspot_rules or "",
+                    "max_findings_per_fix": configuration.max_findings_per_fix,
                     "updated_at": configuration.updated_at,
                 },
             )
@@ -174,16 +206,34 @@ class PostgresFixRepository:
     ) -> FixJob | None:
         now = datetime.now(UTC)
         async with self._engine.begin() as connection:
+            values: dict[str, object] = {
+                "status": status.value,
+                "error_message": error_message,
+                "pull_request_url": pull_request_url,
+                "updated_at": now,
+            }
+            if branch_name is not None:
+                values["branch_name"] = branch_name
             result = await connection.execute(
                 update(_FIX_JOBS)
                 .where(_FIX_JOBS.c.job_id == job_id, _FIX_JOBS.c.workspace_id == workspace_id)
-                .values(
-                    status=status.value,
-                    error_message=error_message,
-                    pull_request_url=pull_request_url,
-                    branch_name=branch_name,
-                    updated_at=now,
+                .values(**values)
+            )
+            if result.rowcount != 1:
+                return None
+        return await self.get_job(job_id, workspace_id)
+
+    async def claim_job(self, job_id: UUID, workspace_id: str) -> FixJob | None:
+        now = datetime.now(UTC)
+        async with self._engine.begin() as connection:
+            result = await connection.execute(
+                update(_FIX_JOBS)
+                .where(
+                    _FIX_JOBS.c.job_id == job_id,
+                    _FIX_JOBS.c.workspace_id == workspace_id,
+                    _FIX_JOBS.c.status == FixJobStatus.QUEUED.value,
                 )
+                .values(status=FixJobStatus.RUNNING.value, updated_at=now)
             )
             if result.rowcount != 1:
                 return None
@@ -199,6 +249,7 @@ def _configuration_values(value: FixConfiguration) -> dict[str, object]:
         "rules": value.rules,
         "finding_rules": value.finding_rules or value.rules,
         "hotspot_rules": value.hotspot_rules or "",
+        "max_findings_per_fix": value.max_findings_per_fix,
         "updated_at": value.updated_at,
     }
 
@@ -227,6 +278,7 @@ def _configuration_from_row(row: Any) -> FixConfiguration:
         updated_at=cast(datetime, row["updated_at"]),
         finding_rules=str(row.get("finding_rules") or row.get("rules") or ""),
         hotspot_rules=str(row.get("hotspot_rules") or ""),
+        max_findings_per_fix=int(row.get("max_findings_per_fix") or 10),
     )
 
 

@@ -16,12 +16,26 @@ export function selectionState(visibleIds: readonly string[], selectedIds: Reado
   }
 }
 
+/** Preserve insertion order while enforcing a selection cap. */
+export function limitSelection(selectedIds: ReadonlySet<string>, max: number): Set<string> {
+  const limit = Number.isFinite(max) ? Math.max(0, Math.floor(max)) : selectedIds.size
+  return new Set([...selectedIds].slice(0, limit))
+}
+
+export function toggleSelection(id: string, selectedIds: ReadonlySet<string>, max = Number.POSITIVE_INFINITY): Set<string> {
+  const next = limitSelection(selectedIds, max)
+  if (next.has(id)) next.delete(id)
+  else if (next.size < max) next.add(id)
+  return next
+}
+
 export function toggleVisibleSelection(
   visibleIds: readonly string[],
   selectedIds: ReadonlySet<string>,
+  max = Number.POSITIVE_INFINITY,
 ): Set<string> {
-  const next = new Set(selectedIds)
+  const next = limitSelection(selectedIds, max)
   const { allVisibleSelected } = selectionState(visibleIds, selectedIds)
   visibleIds.forEach((id) => (allVisibleSelected ? next.delete(id) : next.add(id)))
-  return next
+  return limitSelection(next, max)
 }

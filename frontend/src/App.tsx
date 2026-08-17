@@ -44,7 +44,7 @@ import { deleteAnalyses, type AnalysisDeletionResult } from './analysisDeletion'
 import { getSelectionState, toggleAllHistorySelection, toggleHistorySelection } from './analysisHistorySelection'
 import { createFindingsMarkdownExport, downloadMarkdownFile } from './findingsExport'
 import { createHotspotsMarkdownExport, MAX_HOTSPOTS_EXPORT } from './hotspotsExport'
-import { chunkSelection, selectionState, toggleVisibleSelection } from './bulkSelection'
+import { chunkSelection, limitSelection, selectionState, toggleSelection, toggleVisibleSelection } from './bulkSelection'
 import { TableFilterDialog } from './components/TableFilterDialog'
 import { ConfirmationDialog } from './components/ConfirmationDialog'
 import {
@@ -81,6 +81,13 @@ import {
 } from './hotspotsPresentation'
 
 type View = 'repositories' | 'analyses' | 'overview' | 'findings' | 'hotspots' | 'files' | 'quality' | 'setup'
+
+const DEFAULT_MAX_FINDINGS_PER_FIX = 10
+
+function normalizeMaxFindingsPerFix(value: number | undefined): number {
+  if (typeof value !== 'number' || !Number.isInteger(value)) return DEFAULT_MAX_FINDINGS_PER_FIX
+  return Math.min(DEFAULT_MAX_FINDINGS_PER_FIX, Math.max(1, value))
+}
 
 const views: { id: View; label: string; icon: string }[] = [
   { id: 'repositories', label: 'Repositories', icon: 'R' },
@@ -212,7 +219,7 @@ function App() {
   const [llmProviders, setLlmProviders] = useState<readonly LlmProvider[]>([])
   const [llmLoading, setLlmLoading] = useState(true)
   const [llmError, setLlmError] = useState<string | null>(null)
-  const [fixConfiguration, setFixConfiguration] = useState<FixConfiguration>({ finding_rules: '', hotspot_rules: '' })
+  const [fixConfiguration, setFixConfiguration] = useState<FixConfiguration>({ finding_rules: '', hotspot_rules: '', max_findings_per_fix: DEFAULT_MAX_FINDINGS_PER_FIX })
   const [fixLoading, setFixLoading] = useState(true)
   const [fixError, setFixError] = useState<string | null>(null)
 
@@ -767,6 +774,7 @@ function SetupView({
   const [saving, setSaving] = useState(false)
   const [findingRules, setFindingRules] = useState('')
   const [hotspotRules, setHotspotRules] = useState('')
+  const [maxFindingsPerFix, setMaxFindingsPerFix] = useState(DEFAULT_MAX_FINDINGS_PER_FIX)
   const [fixSaving, setFixSaving] = useState(false)
   const [fixMessage, setFixMessage] = useState<string | null>(null)
   useEffect(() => {
@@ -780,7 +788,8 @@ function SetupView({
   useEffect(() => {
     setFindingRules(fixConfiguration.finding_rules ?? fixConfiguration.rules ?? '')
     setHotspotRules(fixConfiguration.hotspot_rules ?? '')
-  }, [fixConfiguration.finding_rules, fixConfiguration.hotspot_rules, fixConfiguration.rules])
+    setMaxFindingsPerFix(normalizeMaxFindingsPerFix(fixConfiguration.max_findings_per_fix))
+  }, [fixConfiguration.finding_rules, fixConfiguration.hotspot_rules, fixConfiguration.rules, fixConfiguration.max_findings_per_fix])
   const models = configuration?.provider === provider ? (configuration.available_models ?? []) : []
   const reasoningEfforts = configuration?.provider === provider
     ? (configuration.reasoning_efforts_by_model?.[model] ?? [])
@@ -798,7 +807,7 @@ function SetupView({
     if (fixLoading) return
     setFixSaving(true); setFixMessage(null)
     try {
-      const value = await saveFixConfiguration({ rules: findingRules, finding_rules: findingRules, hotspot_rules: hotspotRules })
+      const value = await saveFixConfiguration({ rules: findingRules, finding_rules: findingRules, hotspot_rules: hotspotRules, max_findings_per_fix: maxFindingsPerFix })
       onFixSaved(value)
       setFixMessage('Fix rules saved.')
     } catch (error) {
@@ -837,9 +846,19 @@ function SetupView({
       </div>
       <fieldset className="setup-fieldset fix-rules-fieldset" disabled={fixLoading || fixSaving}>
         <legend>Fix rules</legend>
-        <div className="form-field">
-          <label htmlFor="fix-findings-rules">Instructions to follow when fixing findings</label>
-          <textarea id="fix-findings-rules" rows={6} value={findingRules} onChange={(event) => setFindingRules(event.target.value)} />
+        <div className="fix-finding-config">
+          <div className="form-field">
+            <label htmlFor="fix-findings-rules">Instructions to follow when fixing findings</label>
+            <textarea id="fix-findings-rules" rows={6} value={findingRules} onChange={(event) => setFindingRules(event.target.value)} />
+          </div>
+          <div className="form-field">
+            <label htmlFor="fix-max-findings">Maximum findings per fix</label>
+            <select id="fix-max-findings" value={maxFindingsPerFix} onChange={(event) => setMaxFindingsPerFix(Number(event.target.value))}>
+              {Array.from({ length: DEFAULT_MAX_FINDINGS_PER_FIX }, (_, index) => index + 1).map((value) => (
+                <option key={value} value={value}>{value}</option>
+              ))}
+            </select>
+          </div>
         </div>
         <div className="form-field">
           <label htmlFor="fix-hotspots-rules">Instructions to follow when fixing hotspots</label>
@@ -931,6 +950,7 @@ function WorkspaceContent(props: WorkspaceViewProps) {
           analysisId={props.analysisId}
           onSelectPath={props.onSelectPath}
           llmEnabled={Boolean(props.llmConfiguration?.enabled)}
+          maxFindingsPerFix={normalizeMaxFindingsPerFix(props.fixConfiguration.max_findings_per_fix)}
         />
       )
     case 'hotspots':
@@ -996,6 +1016,7 @@ function FindingsView({
   analysisId,
   onSelectPath,
   llmEnabled,
+  maxFindingsPerFix,
 }: {
   findings: AnalysisFinding[]
   status: AnalysisStatus | null
@@ -1005,6 +1026,7 @@ function FindingsView({
   analysisId: string | null
   onSelectPath: (path: string) => void
   llmEnabled: boolean
+  maxFindingsPerFix: number
 }) {
   const [sort, setSort] = useState<FindingSort>({ column: 'severity', direction: 'desc' })
   const [visibleColumns, setVisibleColumns] = useState<FindingColumnKey[]>(() => FINDING_COLUMNS.map(({ key }) => key))
@@ -1021,21 +1043,16 @@ function FindingsView({
   useEffect(() => {
     setSelectedIds((current) => {
       const valid = new Set(findings.map(findingIdentity))
-      return new Set([...current].filter((id) => valid.has(id)))
+      return limitSelection(new Set([...current].filter((id) => valid.has(id))), maxFindingsPerFix)
     })
-  }, [findings])
+  }, [findings, maxFindingsPerFix])
   useEffect(() => {
     const visible = new Set(filteredFindings.map(findingIdentity))
-    setSelectedIds((current) => new Set([...current].filter((id) => visible.has(id))))
-  }, [filteredFindings])
+    setSelectedIds((current) => limitSelection(new Set([...current].filter((id) => visible.has(id))), maxFindingsPerFix))
+  }, [filteredFindings, maxFindingsPerFix])
   const toggleFindingSelection = (finding: AnalysisFinding) => {
     const id = findingIdentity(finding)
-    setSelectedIds((current) => {
-      const next = new Set(current)
-      if (next.has(id)) next.delete(id)
-      else next.add(id)
-      return next
-    })
+    setSelectedIds((current) => toggleSelection(id, current, maxFindingsPerFix))
   }
   const visibleFindingIds = filteredFindings.map(findingIdentity)
   const findingSelection = selectionState(visibleFindingIds, selectedIds)
@@ -1043,28 +1060,23 @@ function FindingsView({
   useEffect(() => {
     if (findingMasterRef.current) findingMasterRef.current.indeterminate = findingSelection.partiallySelected
   }, [findingSelection.partiallySelected])
-  const toggleAllFindings = () => setSelectedIds((current) => toggleVisibleSelection(visibleFindingIds, current))
+  const toggleAllFindings = () => setSelectedIds((current) => toggleVisibleSelection(visibleFindingIds, current, maxFindingsPerFix))
   const submitFixes = async () => {
     if (!analysisId || !llmEnabled || selectedIds.size === 0 || typeof createFixJob !== 'function') return
     setFixBusy(true); setFixError(null); setFixJobs([])
-    const jobs: FixJob[] = []
     try {
-      for (const batch of chunkSelection([...selectedIds])) {
-        try {
-          let current = await createFixJob(analysisId, batch, 'finding')
-          jobs.push(current); setFixJobs([...jobs])
-          if ((current.status === 'queued' || current.status === 'running') && typeof getFixJob === 'function') {
-            for (let attempt = 0; attempt < 180; attempt += 1) {
-              await new Promise((resolve) => window.setTimeout(resolve, 1000))
-              current = await getFixJob(current.job_id)
-              jobs[jobs.length - 1] = current; setFixJobs([...jobs])
-              if (current.status === 'succeeded' || current.status === 'failed') break
-            }
+      let current = await createFixJob(analysisId, [...selectedIds], 'finding')
+      setFixJobs([current])
+      if ((current.status === 'queued' || current.status === 'running') && typeof getFixJob === 'function') {
+        for (let attempt = 0; attempt < 180; attempt += 1) {
+          await new Promise((resolve) => window.setTimeout(resolve, 1000))
+          current = await getFixJob(current.job_id)
+          setFixJobs([current])
+          if (current.status === 'succeeded' || current.status === 'failed') break
           }
-        } catch (batchError) {
-          setFixError(batchError instanceof Error ? batchError.message : 'Unable to fix findings batch.')
-        }
       }
+    } catch (fixJobError) {
+      setFixError(fixJobError instanceof Error ? fixJobError.message : 'Unable to fix findings.')
     } finally { setFixBusy(false) }
   }
   const availableTypes = useMemo(
@@ -1185,6 +1197,7 @@ function FindingsView({
             >
               {fixBusy ? 'Fixing…' : 'Fix Findings'}
             </button>
+            <span aria-label="Selected findings" aria-live="polite" className="muted">({selectedIds.size}/{maxFindingsPerFix})</span>
             <button
               className="secondary-button"
               disabled={orderedFindings.length === 0}
@@ -1299,6 +1312,7 @@ function FindingsView({
                         <input
                           aria-label={`Select finding ${finding.rule_id} at ${finding.path}:${finding.start_line}`}
                           checked={selectedIds.has(findingIdentity(finding))}
+                          disabled={!selectedIds.has(findingIdentity(finding)) && selectedIds.size >= maxFindingsPerFix}
                           onChange={() => toggleFindingSelection(finding)}
                           type="checkbox"
                         />

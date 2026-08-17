@@ -129,6 +129,14 @@ def create_app(
             analysis_repository,
             fix_repository,
             fix_queue_for_celery(),
+            runtime_ready=lambda: (
+                resolved_settings.fix_execution_enabled
+                and resolved_settings.fix_sandbox_url is not None
+                and resolved_settings.github_enabled
+                and resolved_settings.github_app_id is not None
+                and resolved_settings.github_private_key_value() is not None
+                and resolved_settings.llm_config_encryption_key_value() is not None
+            ),
         )
     else:
         fix_repository = getattr(fix_service, "_repository", None)

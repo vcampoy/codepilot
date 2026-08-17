@@ -724,8 +724,56 @@ describe('analysis history and quality KPI', () => {
     await waitFor(() => expect(provider).toBeEnabled())
     expect(screen.getByRole('button', { name: 'Save LLM configuration' })).toBeEnabled()
   })
+
+  it('loads, edits, and saves the maximum Findings Fix selection', async () => {
+    fixtures.getFixConfiguration.mockResolvedValue({ rules: 'Run tests', max_findings_per_fix: 3 })
+    fixtures.saveFixConfiguration.mockResolvedValue({ rules: 'Run tests', max_findings_per_fix: 4 })
+    render(<App />)
+    fireEvent.click(screen.getByRole('button', { name: 'Setup' }))
+
+    const maxFindings = await screen.findByLabelText('Maximum findings per fix')
+    expect(maxFindings).toHaveValue('3')
+    fireEvent.change(maxFindings, { target: { value: '4' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Save Fix rules' }))
+
+    await waitFor(() => expect(fixtures.saveFixConfiguration).toHaveBeenCalledWith(expect.objectContaining({
+      max_findings_per_fix: 4,
+    })))
+  })
 })
 describe('completed analysis result loading', () => {
+  it('caps Findings selection at ten and reports the accessible live counter', async () => {
+    configureCompletedRun()
+    fixtures.getLlmConfiguration.mockResolvedValue({ ...DEFAULT_LLM_CONFIGURATION, enabled: true })
+    fixtures.createFixJob.mockResolvedValue({
+      job_id: 'job-1', analysis_id: 'analysis-1', status: 'succeeded',
+      branch_name: 'fix/findings', pull_request_url: null, error: null,
+    })
+    const findings = Array.from({ length: 11 }, (_, index) => ({
+      ...finding,
+      finding_id: `finding-${index + 1}`,
+      rule_id: `PY${String(index + 1).padStart(3, '0')}`,
+    }))
+    fixtures.getAnalysisFindings.mockResolvedValue(findings)
+    fixtures.getAnalysisHotspots.mockResolvedValue([insight])
+    fixtures.getAnalysisFiles.mockResolvedValue({ items: [insight], total: 1, limit: 100, offset: 0 })
+
+    render(<App />)
+    fireEvent.submit(screen.getByRole('button', { name: 'Analyze repository' }).closest('form')!, {
+      preventDefault: () => undefined,
+    })
+    fireEvent.click(await screen.findByRole('button', { name: 'Findings' }))
+    await waitFor(() => expect(screen.getByText('Findings (11)')).toBeInTheDocument())
+
+    expect(screen.getByLabelText('Selected findings')).toHaveTextContent('(0/10)')
+    fireEvent.click(screen.getByRole('checkbox', { name: 'Select all visible findings' }))
+    expect(screen.getByLabelText('Selected findings')).toHaveTextContent('(10/10)')
+    expect(screen.getByRole('checkbox', { name: 'Select finding PY011 at src/main.py:4' })).toBeDisabled()
+    fireEvent.click(screen.getByRole('button', { name: 'Fix Findings' }))
+    await waitFor(() => expect(fixtures.createFixJob).toHaveBeenCalledOnce())
+    expect(fixtures.createFixJob.mock.calls[0][1]).toHaveLength(10)
+  })
+
   it('filters findings by severity and type', async () => {
     configureCompletedRun()
     fixtures.getAnalysisFindings.mockResolvedValue(filterFindings)

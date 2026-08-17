@@ -27,8 +27,11 @@ class FixConfiguration:
     updated_at: datetime = field(default_factory=lambda: datetime.now(UTC))
     finding_rules: str | None = None
     hotspot_rules: str | None = None
+    max_findings_per_fix: int = 10
 
     def __post_init__(self) -> None:
+        if not 1 <= self.max_findings_per_fix <= 10:
+            raise ValueError("max_findings_per_fix must be between 1 and 10")
         # Keep the legacy ``rules`` field as the findings rules for clients that
         # have not migrated yet.
         if self.finding_rules is None:

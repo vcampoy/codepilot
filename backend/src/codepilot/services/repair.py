@@ -20,6 +20,7 @@ class RepairRequest:
     target_ids: tuple[str, ...]
     evidence: tuple[dict[str, object], ...]
     rules: str
+    workspace_id: str = "default"
 
 
 @dataclass(frozen=True, slots=True)
@@ -46,6 +47,7 @@ class PullRequestPublisher(Protocol):
         patch: str,
         title: str,
         description: str,
+        base_branch: str | None = None,
     ) -> str: ...
 
 
@@ -73,9 +75,11 @@ class RepairExecutor:
         repository_url: str,
         commit_sha: str,
         branch_name: str,
+        base_branch: str | None = None,
     ) -> str:
         response = await self._gateway.generate_repair(request)
-        validate_unified_patch(response.patch)
+        paths = validate_unified_patch(response.patch)
+        _validate_patch_scope(paths, request)
         try:
             commands = await self._sandbox.verify(repository_url, commit_sha, response.patch)
         except Exception as error:
@@ -90,6 +94,7 @@ class RepairExecutor:
                 response.patch,
                 response.title,
                 response.description,
+                base_branch,
             )
         except Exception as error:
             raise RepairExecutionError("Repair pull request could not be published.") from error
@@ -120,6 +125,16 @@ def validate_unified_patch(patch: str, *, max_bytes: int = 512_000) -> tuple[str
     if _SECRET.search(patch):
         raise ValueError("Patch appears to contain a secret assignment.")
     return tuple(dict.fromkeys(paths))
+
+
+def _validate_patch_scope(paths: tuple[str, ...], request: RepairRequest) -> None:
+    allowed = {
+        str(item.get("path"))
+        for item in request.evidence
+        if isinstance(item.get("path"), str)
+    }
+    if allowed and any(path not in allowed for path in paths):
+        raise RepairExecutionError("Repair patch modifies a path outside selected targets.")
 
 
 @dataclass(frozen=True, slots=True)

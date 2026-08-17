@@ -72,6 +72,7 @@ def test_repair_executor_requires_verified_tests_before_publishing() -> None:
             _patch: str,
             _title: str,
             _description: str,
+            _base_branch: str | None = None,
         ) -> str:
             raise AssertionError("publisher must not run")
 

@@ -129,6 +129,8 @@ export interface FixConfiguration {
   rules?: string
   finding_rules?: string
   hotspot_rules?: string
+  /** Maximum number of Findings that may be submitted in one Fix job. */
+  max_findings_per_fix?: number
 }
 
 export type FixJobStatus = 'queued' | 'running' | 'succeeded' | 'failed'

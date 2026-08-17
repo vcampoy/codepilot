@@ -6,7 +6,7 @@ from collections.abc import Callable, Sequence
 from datetime import UTC, datetime
 from typing import Protocol
 from urllib.parse import urlsplit
-from uuid import UUID
+from uuid import UUID, uuid4
 
 from codepilot.domain.analysis import (
     AnalysisFinding,
@@ -46,11 +46,13 @@ class FixService:
         queue: FixQueue,
         *,
         now: Callable[[], datetime] | None = None,
+        runtime_ready: Callable[[], bool] | None = None,
     ) -> None:
         self._analysis_repository = analysis_repository
         self._repository = repository
         self._queue = queue
         self._now = now or (lambda: datetime.now(UTC))
+        self._runtime_ready = runtime_ready
 
     async def get_rules(self, workspace_id: str) -> FixConfiguration:
         return await self._repository.get_configuration(workspace_id)
@@ -58,15 +60,34 @@ class FixService:
     async def save_rules(self, workspace_id: str, rules: str) -> FixConfiguration:
         if len(rules) > 32_000:
             raise FixValidationError("Fix rules exceed the maximum size.")
+        existing = await self._repository.get_configuration(workspace_id)
         return await self._repository.save_configuration(
-            FixConfiguration(workspace_id, rules, self._now())
+            FixConfiguration(
+                workspace_id,
+                rules,
+                self._now(),
+                max_findings_per_fix=existing.max_findings_per_fix,
+            )
         )
 
     async def save_configuration(
-        self, workspace_id: str, *, finding_rules: str, hotspot_rules: str
+        self,
+        workspace_id: str,
+        *,
+        finding_rules: str,
+        hotspot_rules: str,
+        max_findings_per_fix: int | None = None,
     ) -> FixConfiguration:
         if len(finding_rules) > 32_000 or len(hotspot_rules) > 32_000:
             raise FixValidationError("Fix rules exceed the maximum size.")
+        current = await self._repository.get_configuration(workspace_id)
+        limit = (
+            max_findings_per_fix
+            if max_findings_per_fix is not None
+            else current.max_findings_per_fix
+        )
+        if not 1 <= limit <= 10:
+            raise FixValidationError("Maximum findings per fix must be between 1 and 10.")
         return await self._repository.save_configuration(
             FixConfiguration(
                 workspace_id,
@@ -74,6 +95,7 @@ class FixService:
                 self._now(),
                 finding_rules=finding_rules,
                 hotspot_rules=hotspot_rules,
+                max_findings_per_fix=limit,
             )
         )
 
@@ -85,6 +107,8 @@ class FixService:
         *,
         target_type: FixTargetType = FixTargetType.FINDING,
     ) -> FixJob:
+        if self._runtime_ready is not None and not self._runtime_ready():
+            raise FixValidationError("Fix execution is not configured.")
         analysis = await self._analysis_repository.get(analysis_id, workspace_id)
         normalized = self._validate_analysis_and_ids(analysis, finding_ids, target_type)
         if analysis is None:
@@ -96,6 +120,11 @@ class FixService:
         else:
             findings = await self._analysis_repository.get_findings(analysis_id)
             valid_ids = {fingerprint_finding(item) for item in findings}
+            configuration = await self._repository.get_configuration(workspace_id)
+            if len(normalized) > configuration.max_findings_per_fix:
+                raise FixValidationError(
+                    f"Select between 1 and {configuration.max_findings_per_fix} findings."
+                )
         if any(item not in valid_ids for item in normalized):
             label = "hotspots" if target_type is FixTargetType.HOTSPOT else "findings"
             raise FixValidationError(f"One or more {label} were not found.")
@@ -142,13 +171,15 @@ class FixService:
     ) -> FixJob:
         timestamp = self._now().astimezone(UTC).strftime("%Y-%m-%d-%H-%M-%S")
         now = self._now()
+        job_id = uuid4()
         return FixJob(
+            job_id=job_id,
             analysis_id=analysis_id,
             workspace_id=workspace_id,
             finding_ids=finding_ids if target_type is FixTargetType.FINDING else (),
             target_type=target_type,
             target_ids=finding_ids,
-            branch_name=f"fix-{target_type.value}s-{timestamp}",
+            branch_name=f"fix-{target_type.value}s-{timestamp}-{job_id.hex[:8]}",
             created_at=now,
             updated_at=now,
         )

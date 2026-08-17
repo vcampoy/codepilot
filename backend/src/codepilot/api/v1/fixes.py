@@ -20,6 +20,7 @@ class FixConfigurationPayload(BaseModel):
     rules: str = Field(default="", max_length=32_000)
     finding_rules: str | None = Field(default=None, max_length=32_000)
     hotspot_rules: str = Field(default="", max_length=32_000)
+    max_findings_per_fix: int | None = Field(default=None, ge=1, le=10)
 
 
 class FixConfigurationResponse(BaseModel):
@@ -27,6 +28,7 @@ class FixConfigurationResponse(BaseModel):
     finding_rules: str = ""
     hotspot_rules: str = ""
     updated_at: str
+    max_findings_per_fix: int = 10
 
 
 class FixJobPayload(BaseModel):
@@ -72,6 +74,7 @@ async def save_fix_configuration(
                     payload.finding_rules if payload.finding_rules is not None else payload.rules
                 ),
                 hotspot_rules=payload.hotspot_rules,
+                max_findings_per_fix=payload.max_findings_per_fix,
             )
         )
     except FixValidationError as error:
@@ -120,6 +123,7 @@ def _configuration(value: FixConfiguration) -> FixConfigurationResponse:
         finding_rules=value.finding_rules or value.rules,
         hotspot_rules=value.hotspot_rules or "",
         updated_at=value.updated_at.isoformat(),
+        max_findings_per_fix=value.max_findings_per_fix,
     )
 
 

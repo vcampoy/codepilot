@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import base64
 import time
 from collections.abc import Awaitable, Callable, Mapping
 from datetime import UTC, datetime
@@ -119,31 +120,140 @@ class GitHubClient:
             raise GitHubApiError("GitHub did not return an installation for the repository.")
         return int(response.payload["id"])
 
-    async def publish_patch(
+    async def repository_default_branch(self, repository: str, *, token: str) -> str:
+        response = await self._request("GET", f"/repos/{repository}", token=token)
+        branch = (
+            response.payload.get("default_branch") if isinstance(response.payload, dict) else None
+        )
+        if not isinstance(branch, str) or not branch:
+            raise GitHubApiError("GitHub did not return a default branch.")
+        return branch
+
+    async def publish_files(
         self,
         repository: str,
         *,
         base_sha: str,
         branch: str,
-        patch: str,
+        files: Mapping[str, str | None],
         title: str,
         body: str,
+        base_branch: str | None = None,
         token: str,
     ) -> str:
-        """Publish a validated patch through GitHub's Contents/PR API."""
-        # The patch application itself belongs in the sandbox adapter. This API
-        # boundary accepts the resulting file blobs as a future extension.
+        if not files:
+            raise GitHubApiError("Repair did not produce changed files.")
+        base_tree = await self._base_tree(repository, base_sha, token)
+        entries = await self._blob_entries(repository, files, token)
+        tree_sha = await self._create_tree(repository, base_tree, entries, token)
+        commit_sha = await self._create_commit(repository, tree_sha, base_sha, title, token)
+        await self._create_ref(repository, branch, commit_sha, token)
+        try:
+            target_branch = base_branch or await self.repository_default_branch(
+                repository, token=token
+            )
+            response = await self._request(
+                "POST",
+                f"/repos/{repository}/pulls",
+                token=token,
+                json_payload={
+                    "title": title,
+                    "body": body,
+                    "head": branch,
+                    "base": target_branch,
+                },
+            )
+            url = response.payload.get("html_url") if isinstance(response.payload, dict) else None
+            if not isinstance(url, str) or not url:
+                raise GitHubApiError("GitHub did not return a pull request URL.")
+            return url
+        except Exception:
+            await self._delete_ref_best_effort(repository, branch, token)
+            raise
+
+    async def _base_tree(self, repository: str, commit_sha: str, token: str) -> str:
+        response = await self._request(
+            "GET", f"/repos/{repository}/git/commits/{commit_sha}", token=token
+        )
+        tree = response.payload.get("tree", {}) if isinstance(response.payload, dict) else {}
+        value = tree.get("sha") if isinstance(tree, dict) else None
+        if not isinstance(value, str) or not value:
+            raise GitHubApiError("GitHub did not return the base tree.")
+        return value
+
+    async def _blob_entries(
+        self, repository: str, files: Mapping[str, str | None], token: str
+    ) -> list[dict[str, object]]:
+        entries: list[dict[str, object]] = []
+        for path, content in files.items():
+            blob_sha = await self._create_blob(repository, content, token)
+            entries.append({"path": path, "mode": "100644", "type": "blob", "sha": blob_sha})
+        return entries
+
+    async def _create_blob(self, repository: str, content: str | None, token: str) -> str | None:
+        if content is None:
+            return None
         response = await self._request(
             "POST",
-            f"/repos/{repository}/pulls",
+            f"/repos/{repository}/git/blobs",
             token=token,
-            json_payload={"title": title, "body": body, "head": branch, "base": "main"},
+            json_payload={
+                "content": base64.b64encode(content.encode()).decode(),
+                "encoding": "base64",
+            },
         )
-        if not isinstance(response.payload, dict) or not isinstance(
-            response.payload.get("html_url"), str
-        ):
-            raise GitHubApiError("GitHub did not return a pull request URL.")
-        return str(response.payload["html_url"])
+        value = response.payload.get("sha") if isinstance(response.payload, dict) else None
+        if not isinstance(value, str):
+            raise GitHubApiError("GitHub did not return a blob SHA.")
+        return value
+
+    async def _create_tree(
+        self,
+        repository: str,
+        base_tree: str,
+        entries: list[dict[str, object]],
+        token: str,
+    ) -> str:
+        response = await self._request(
+            "POST",
+            f"/repos/{repository}/git/trees",
+            token=token,
+            json_payload={"base_tree": base_tree, "tree": entries},
+        )
+        value = response.payload.get("sha") if isinstance(response.payload, dict) else None
+        if not isinstance(value, str):
+            raise GitHubApiError("GitHub did not return the repair tree.")
+        return value
+
+    async def _create_commit(
+        self, repository: str, tree_sha: str, base_sha: str, title: str, token: str
+    ) -> str:
+        response = await self._request(
+            "POST",
+            f"/repos/{repository}/git/commits",
+            token=token,
+            json_payload={"message": title, "tree": tree_sha, "parents": [base_sha]},
+        )
+        value = response.payload.get("sha") if isinstance(response.payload, dict) else None
+        if not isinstance(value, str):
+            raise GitHubApiError("GitHub did not return the repair commit.")
+        return value
+
+    async def _create_ref(self, repository: str, branch: str, commit_sha: str, token: str) -> None:
+        await self._request(
+            "POST",
+            f"/repos/{repository}/git/refs",
+            token=token,
+            json_payload={"ref": f"refs/heads/{branch}", "sha": commit_sha},
+        )
+
+    async def _delete_ref_best_effort(self, repository: str, branch: str, token: str) -> None:
+        try:
+            await self._request(
+                "DELETE", f"/repos/{repository}/git/refs/heads/{branch}", token=token
+            )
+        except GitHubApiError:
+            return
 
     async def _request(self, method: str, path: str, **kwargs: object) -> GitHubResponse:
         last_rate_limit = False
