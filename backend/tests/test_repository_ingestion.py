@@ -673,9 +673,7 @@ def test_measure_storage_wraps_permission_error_from_stat(
     monkeypatch.setattr(ingestion, "_iter_files", enumerated_files)
     original_stat = Path.stat
 
-    def stat_with_permission_error(
-        path: Path, *, follow_symlinks: bool = True
-    ) -> os.stat_result:
+    def stat_with_permission_error(path: Path, *, follow_symlinks: bool = True) -> os.stat_result:
         if path == denied:
             raise PermissionError("denied")
         return original_stat(path, follow_symlinks=follow_symlinks)

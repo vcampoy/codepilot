@@ -150,9 +150,7 @@ def parse_bandit_json(payload: str, root: Path | None = None) -> tuple[Normalize
     findings: list[NormalizedFinding] = []
     for value in values:
         path = (
-            _path(str(value["filename"]), root)
-            if root
-            else Path(str(value["filename"])).as_posix()
+            _path(str(value["filename"]), root) if root else Path(str(value["filename"])).as_posix()
         )
         rule_id = str(value["test_id"])
         if rule_id == "B101" and _is_pytest_path(path):
@@ -280,9 +278,7 @@ class RuffAnalyzer(_PythonToolAnalyzer):
             if packages:
                 packages_value = "[" + ",".join(json.dumps(package) for package in packages) + "]"
                 args.extend(("--config", f"lint.isort.known-first-party={packages_value}"))
-        version, scan = await self._run_tool(
-            context, tuple(args)
-        )
+        version, scan = await self._run_tool(context, tuple(args))
         execution = self._execution(version, scan, started)
         if not execution.available:
             return AnalyzerResult(execution=execution)

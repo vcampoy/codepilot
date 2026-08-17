@@ -20,8 +20,13 @@ class GitHubAppPullRequestPublisher(PullRequestPublisher):
         self._installation_token = installation_token
 
     async def publish(
-        self, repository_url: str, commit_sha: str, branch_name: str, patch: str,
-        title: str, description: str,
+        self,
+        repository_url: str,
+        commit_sha: str,
+        branch_name: str,
+        patch: str,
+        title: str,
+        description: str,
     ) -> str:
         paths = validate_unified_patch(patch)
         del paths  # validated before any external mutation

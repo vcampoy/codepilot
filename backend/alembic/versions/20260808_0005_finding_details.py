@@ -15,9 +15,7 @@ def upgrade() -> None:
     op.add_column("codepilot_analysis_findings", sa.Column("title", sa.String(length=512)))
     op.add_column("codepilot_analysis_findings", sa.Column("evidence", sa.Text()))
     op.add_column("codepilot_analysis_findings", sa.Column("remediation", sa.Text()))
-    op.execute(
-        "UPDATE codepilot_analysis_findings SET title = rule_id WHERE title IS NULL"
-    )
+    op.execute("UPDATE codepilot_analysis_findings SET title = rule_id WHERE title IS NULL")
 
 
 def downgrade() -> None:

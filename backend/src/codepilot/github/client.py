@@ -134,7 +134,9 @@ class GitHubClient:
         # The patch application itself belongs in the sandbox adapter. This API
         # boundary accepts the resulting file blobs as a future extension.
         response = await self._request(
-            "POST", f"/repos/{repository}/pulls", token=token,
+            "POST",
+            f"/repos/{repository}/pulls",
+            token=token,
             json_payload={"title": title, "body": body, "head": branch, "base": "main"},
         )
         if not isinstance(response.payload, dict) or not isinstance(

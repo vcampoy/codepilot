@@ -22,6 +22,7 @@ class TodoAnalyzer:
         # Read bytes only. Never import or execute repository modules.
         return AnalyzerResult()
 
+
 registry = AnalyzerRegistry()
 registry.register(TodoAnalyzer())
 result = await DeterministicAnalyzerOrchestrator(registry).run(context)
