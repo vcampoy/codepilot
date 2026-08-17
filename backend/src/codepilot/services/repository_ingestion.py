@@ -17,10 +17,15 @@ from collections.abc import AsyncIterator, Callable, Iterator, Sequence
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Final, Protocol
+from typing import Any, Final, Protocol, cast
 from urllib.parse import SplitResult, urlsplit
 
 from codepilot.core.settings import Settings
+
+_CREATE_NO_WINDOW: Final[int] = cast(int, getattr(subprocess, "CREATE_NO_WINDOW", 0))
+_CREATE_NEW_PROCESS_GROUP: Final[int] = cast(
+    int, getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
+)
 
 
 class RepositoryIngestionError(Exception):
@@ -910,7 +915,7 @@ async def _terminate_windows_process(process: asyncio.subprocess.Process, force:
             *arguments,
             stdout=asyncio.subprocess.DEVNULL,
             stderr=asyncio.subprocess.DEVNULL,
-            creationflags=subprocess.CREATE_NO_WINDOW,
+            creationflags=_CREATE_NO_WINDOW,
         )
         await asyncio.wait_for(killer.wait(), timeout=0.5)
     except (OSError, TimeoutError):
@@ -957,7 +962,7 @@ async def _create_git_process(
             stdout=stdout,
             stderr=asyncio.subprocess.DEVNULL,
             env=environment,
-            creationflags=subprocess.CREATE_NEW_PROCESS_GROUP | subprocess.CREATE_NO_WINDOW,
+            creationflags=_CREATE_NEW_PROCESS_GROUP | _CREATE_NO_WINDOW,
         )
     return await asyncio.create_subprocess_exec(
         *arguments,

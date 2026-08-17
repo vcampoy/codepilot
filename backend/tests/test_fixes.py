@@ -1,29 +1,37 @@
 import asyncio
+from contextlib import AbstractAsyncContextManager
 from datetime import UTC, datetime
+from uuid import UUID
 
 import pytest
 from fastapi.testclient import TestClient
 
-from codepilot.domain.analysis import AnalysisFinding, AnalysisStatus, fingerprint_finding
+from codepilot.domain.analysis import (
+    AnalysisFinding,
+    AnalysisRecord,
+    AnalysisStatus,
+    fingerprint_finding,
+)
 from codepilot.domain.fixes import FixJobStatus
 from codepilot.domain.llm_config import LlmConfiguration
 from codepilot.main import create_app
 from codepilot.repositories.analysis import InMemoryAnalysisRepository
 from codepilot.repositories.fixes import InMemoryFixRepository
-from codepilot.services.analysis import AnalysisService
+from codepilot.services.analysis import AnalysisService, NoopAnalyzer
 from codepilot.services.fixes import FixService, FixValidationError
+from codepilot.services.repository_ingestion import RepositorySnapshot
 
 
 class Queue:
-    def __init__(self):
-        self.ids = []
+    def __init__(self) -> None:
+        self.ids: list[UUID] = []
 
-    def enqueue(self, job_id):
+    def enqueue(self, job_id: UUID) -> None:
         self.ids.append(job_id)
 
 
-def completed_with_finding():
-    async def scenario():
+def completed_with_finding() -> tuple[InMemoryAnalysisRepository, AnalysisRecord, AnalysisFinding]:
+    async def scenario() -> tuple[InMemoryAnalysisRepository, AnalysisRecord, AnalysisFinding]:
         repo = InMemoryAnalysisRepository()
         record = await repo.create("https://github.com/acme/repo", "default")
         record.status = AnalysisStatus.COMPLETED
@@ -39,8 +47,8 @@ def completed_with_finding():
     return asyncio.run(scenario())
 
 
-def test_create_fix_job_requires_enabled_llm_and_stable_finding_ids():
-    async def scenario():
+def test_create_fix_job_requires_enabled_llm_and_stable_finding_ids() -> None:
+    async def scenario() -> None:
         repo = InMemoryAnalysisRepository()
         record = await repo.create("https://github.com/acme/repo", "default")
         record.status = AnalysisStatus.COMPLETED
@@ -55,10 +63,10 @@ def test_create_fix_job_requires_enabled_llm_and_stable_finding_ids():
     asyncio.run(scenario())
 
 
-def test_create_fix_job_persists_queued_job_and_branch():
+def test_create_fix_job_persists_queued_job_and_branch() -> None:
     repo, record, finding = completed_with_finding()
 
-    async def scenario():
+    async def scenario() -> None:
         queue = Queue()
         service = FixService(
             repo,
@@ -76,10 +84,10 @@ def test_create_fix_job_persists_queued_job_and_branch():
     asyncio.run(scenario())
 
 
-def test_create_fix_job_rejects_duplicate_finding_ids():
+def test_create_fix_job_rejects_duplicate_finding_ids() -> None:
     repo, record, finding = completed_with_finding()
 
-    async def scenario():
+    async def scenario() -> None:
         service = FixService(repo, InMemoryFixRepository(), Queue())
         finding_id = fingerprint_finding(finding)
         with pytest.raises(FixValidationError, match="unique"):
@@ -89,13 +97,18 @@ def test_create_fix_job_rejects_duplicate_finding_ids():
 
 
 class ApiQueue:
-    def enqueue(self, _id):
+    def enqueue(self, _id: UUID) -> None:
         pass
 
 
-def test_fix_rules_settings_round_trip():
+class ApiIngestion:
+    def ingest(self, _url: str) -> AbstractAsyncContextManager[RepositorySnapshot]:
+        raise AssertionError("ingestion must not run while testing fix settings")
+
+
+def test_fix_rules_settings_round_trip() -> None:
     repo = InMemoryAnalysisRepository()
-    analysis = AnalysisService(repo, object(), object(), ApiQueue())
+    analysis = AnalysisService(repo, ApiIngestion(), NoopAnalyzer(), ApiQueue())
     fix = FixService(repo, InMemoryFixRepository(), ApiQueue())
     with TestClient(create_app(analysis_service=analysis, fix_service=fix)) as client:
         saved = client.put("/api/v1/settings/fixes", json={"rules": "Use strict TDD."})
