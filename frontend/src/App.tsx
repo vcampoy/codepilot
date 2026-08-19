@@ -89,6 +89,10 @@ function normalizeMaxFindingsPerFix(value: number | undefined): number {
   return Math.min(DEFAULT_MAX_FINDINGS_PER_FIX, Math.max(1, value))
 }
 
+function failedFixMessage(job: FixJob): string {
+  return job.error_message?.trim() || job.error?.trim() || 'Fix execution failed.'
+}
+
 const views: { id: View; label: string; icon: string }[] = [
   { id: 'repositories', label: 'Repositories', icon: 'R' },
   { id: 'analyses', label: 'Analysis history', icon: 'A' },
@@ -1213,7 +1217,7 @@ function FindingsView({
           {fixJobs.map((job) => <p className={job.status === 'failed' ? 'error-copy' : 'muted'} key={job.job_id}>
             {job.status === 'succeeded' && job.pull_request_url
               ? <><a href={job.pull_request_url} rel="noreferrer" target="_blank">Pull Request ready</a></>
-              : `Fix job ${job.status}.`}
+              : job.status === 'failed' ? failedFixMessage(job) : `Fix job ${job.status}.`}
           </p>)}
         </div>}
         <AppliedFilterTags values={[...filters.severities, ...filters.types]} />
@@ -1813,7 +1817,7 @@ function HotspotsView({
             </button>
           </div>
         </div>
-        {(fixError || fixJobs.length > 0) && <div role="status">{fixError && <p className="error-copy">{fixError}</p>}{fixJobs.map((job) => <p className={job.status === 'failed' ? 'error-copy' : 'muted'} key={job.job_id}>{job.status === 'succeeded' && job.pull_request_url ? <a href={job.pull_request_url} rel="noreferrer" target="_blank">Pull Request ready</a> : `Fix job ${job.status}.`}</p>)}</div>}
+        {(fixError || fixJobs.length > 0) && <div role="status">{fixError && <p className="error-copy">{fixError}</p>}{fixJobs.map((job) => <p className={job.status === 'failed' ? 'error-copy' : 'muted'} key={job.job_id}>{job.status === 'succeeded' && job.pull_request_url ? <a href={job.pull_request_url} rel="noreferrer" target="_blank">Pull Request ready</a> : job.status === 'failed' ? failedFixMessage(job) : `Fix job ${job.status}.`}</p>)}</div>}
         <AppliedFilterTags values={filters.risks} />
         <TableFilterDialog
           onApply={applyFilters}

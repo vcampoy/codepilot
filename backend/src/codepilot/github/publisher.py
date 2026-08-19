@@ -76,9 +76,7 @@ def _materialize_patch(repository_url: str, commit_sha: str, patch: str) -> dict
             if not path or status.startswith("R") or status.startswith("C"):
                 raise GitHubApiError("Rename patches are not supported.")
             files[path] = (
-                None
-                if status.startswith("D")
-                else (checkout / path).read_text(encoding="utf-8")
+                None if status.startswith("D") else (checkout / path).read_text(encoding="utf-8")
             )
         return files
     except (OSError, subprocess.SubprocessError) as error:

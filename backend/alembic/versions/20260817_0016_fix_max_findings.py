@@ -29,7 +29,5 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
-    op.drop_constraint(
-        "ck_fix_max_findings_per_fix", "codepilot_fix_configurations", type_="check"
-    )
+    op.drop_constraint("ck_fix_max_findings_per_fix", "codepilot_fix_configurations", type_="check")
     op.drop_column("codepilot_fix_configurations", "max_findings_per_fix")

@@ -38,8 +38,12 @@ async def verify(payload: VerifyPayload) -> dict[str, object]:
     try:
         await _run(
             (
-                "git", "clone", "--no-checkout", "--filter=blob:none",
-                payload.repository_url, str(root / "repo"),
+                "git",
+                "clone",
+                "--no-checkout",
+                "--filter=blob:none",
+                payload.repository_url,
+                str(root / "repo"),
             ),
             root,
         )

@@ -129,9 +129,7 @@ def validate_unified_patch(patch: str, *, max_bytes: int = 512_000) -> tuple[str
 
 def _validate_patch_scope(paths: tuple[str, ...], request: RepairRequest) -> None:
     allowed = {
-        str(item.get("path"))
-        for item in request.evidence
-        if isinstance(item.get("path"), str)
+        str(item.get("path")) for item in request.evidence if isinstance(item.get("path"), str)
     }
     if allowed and any(path not in allowed for path in paths):
         raise RepairExecutionError("Repair patch modifies a path outside selected targets.")

@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
+import re
 from collections.abc import Awaitable, Callable
 from importlib import import_module
 from typing import Any, cast
@@ -19,6 +21,7 @@ from codepilot.services.repair import (
 )
 
 Completion = Callable[..., Awaitable[Any]]
+logger = logging.getLogger(__name__)
 
 
 class _RepairOutput(BaseModel):
@@ -60,19 +63,26 @@ class LiteLlmRepairGateway(RepairGateway):
         except (InvalidToken, ValueError) as error:
             raise RepairExecutionError("Stored LLM API key could not be decrypted.") from error
         user_prompt = json.dumps(
-            {"target_type": request.target_type.value, "target_ids": request.target_ids,
-             "rules": request.rules, "evidence": request.evidence},
+            {
+                "target_type": request.target_type.value,
+                "target_ids": request.target_ids,
+                "rules": request.rules,
+                "evidence": request.evidence,
+            },
             ensure_ascii=False,
             default=str,
         )
         kwargs: dict[str, object] = {
             "model": _route_model(configuration.provider, configuration.model),
             "messages": [
-                {"role": "system", "content": (
-                    "Return only JSON with patch, title, description. Create the smallest "
-                    "safe unified diff that fixes only the supplied evidence. Never invent "
-                    "findings, paths, secrets, or unrelated changes."
-                )},
+                {
+                    "role": "system",
+                    "content": (
+                        "Return only JSON with patch, title, description. Create the smallest "
+                        "safe unified diff that fixes only the supplied evidence. Never invent "
+                        "findings, paths, secrets, or unrelated changes."
+                    ),
+                },
                 {"role": "user", "content": user_prompt},
             ],
             "max_tokens": self._max_tokens,
@@ -82,11 +92,31 @@ class LiteLlmRepairGateway(RepairGateway):
         }
         try:
             raw = await asyncio.wait_for(self._completion(**kwargs), self._timeout_seconds)
+        except Exception as error:  # provider SDKs expose incompatible exceptions
+            category, message = _provider_failure(error)
+            logger.warning(
+                "Repair provider request failed",
+                extra={
+                    "category": category,
+                    "provider": configuration.provider,
+                    "model": configuration.model,
+                    "job_id": getattr(request, "job_id", None),
+                },
+            )
+            raise RepairExecutionError(message) from error
+        try:
             content = _completion_content(raw)
             value = _RepairOutput.model_validate_json(content)
-        except Exception as error:  # provider SDKs expose incompatible exceptions
-            if isinstance(error, RepairExecutionError):
-                raise
+        except Exception as error:  # malformed provider output is a contract failure
+            logger.warning(
+                "Repair provider returned malformed output",
+                extra={
+                    "category": "invalid_response",
+                    "provider": configuration.provider,
+                    "model": configuration.model,
+                    "job_id": getattr(request, "job_id", None),
+                },
+            )
             raise RepairExecutionError("Repair model returned an invalid response.") from error
         return RepairResponse(value.patch, value.title, value.description)
 
@@ -120,3 +150,64 @@ def _completion_content(raw: Any) -> str:
 def _route_model(provider: str, model: str) -> str:
     prefix = {"google": "gemini", "grok": "xai", "nvidia": "nvidia_nim"}.get(provider, provider)
     return model if model.startswith(f"{prefix}/") else f"{prefix}/{model}"
+
+
+def _provider_failure(error: Exception) -> tuple[str, str]:
+    """Map provider SDK failures to safe, actionable messages.
+
+    SDK exception text may contain API keys, request bodies, or account details;
+    callers receive only a stable category message and logs contain no raw error.
+    """
+    status_code = _status_code(error)
+    class_name = type(error).__name__.lower()
+    detail = str(error).lower()
+    if _is_timeout(error, class_name, detail):
+        return "timeout", "Repair provider timed out."
+    if _is_rate_limit(status_code, class_name, detail):
+        return "rate_limit", "Repair provider quota or rate limit exceeded."
+    if _is_authentication(status_code, class_name, detail):
+        return "authentication", "Repair provider authentication failed."
+    if _is_unavailable(error, class_name, detail):
+        return "unavailable", "Repair provider is unavailable."
+    return "provider_error", "Repair provider request failed."
+
+
+def _has_marker(value: str, markers: tuple[str, ...]) -> bool:
+    return any(marker in value for marker in markers)
+
+
+def _is_timeout(error: Exception, class_name: str, detail: str) -> bool:
+    return isinstance(error, (asyncio.TimeoutError, TimeoutError)) or _has_marker(
+        class_name + detail, ("timeout", "timed out")
+    )
+
+
+def _is_rate_limit(status_code: int | None, class_name: str, detail: str) -> bool:
+    return status_code == 429 or _has_marker(
+        class_name + detail, ("ratelimit", "rate limit", "quota")
+    )
+
+
+def _is_authentication(status_code: int | None, class_name: str, detail: str) -> bool:
+    return status_code in {401, 403} or _has_marker(
+        class_name + detail, ("authentication", "unauthorized")
+    )
+
+
+def _is_unavailable(error: Exception, class_name: str, detail: str) -> bool:
+    return isinstance(error, (ConnectionError, OSError)) or _has_marker(
+        class_name + detail, ("unavailable", "connection", "serviceunavailable")
+    )
+
+
+def _status_code(error: Exception) -> int | None:
+    candidate = getattr(error, "status_code", None)
+    if candidate is None:
+        response = getattr(error, "response", None)
+        candidate = getattr(response, "status_code", None)
+    return candidate if isinstance(candidate, int) else _status_from_message(str(error))
+
+
+def _status_from_message(message: str) -> int | None:
+    match = re.search(r"\b(401|403|429)\b", message)
+    return int(match.group(1)) if match else None

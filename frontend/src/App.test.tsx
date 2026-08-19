@@ -774,6 +774,53 @@ describe('completed analysis result loading', () => {
     expect(fixtures.createFixJob.mock.calls[0][1]).toHaveLength(10)
   })
 
+  it('shows the backend error message when a Findings fix job fails', async () => {
+    configureCompletedRun()
+    fixtures.getLlmConfiguration.mockResolvedValue({ ...DEFAULT_LLM_CONFIGURATION, enabled: true })
+    fixtures.createFixJob.mockResolvedValue({
+      job_id: 'job-findings', analysis_id: 'analysis-1', status: 'failed',
+      branch_name: null, pull_request_url: null, error: 'Fix job failed.',
+      error_message: 'Repair provider quota or rate limit exceeded.',
+    })
+    fixtures.getAnalysisFindings.mockResolvedValue([finding])
+    fixtures.getAnalysisHotspots.mockResolvedValue([insight])
+    fixtures.getAnalysisFiles.mockResolvedValue({ items: [insight], total: 1, limit: 100, offset: 0 })
+
+    render(<App />)
+    fireEvent.submit(screen.getByRole('button', { name: 'Analyze repository' }).closest('form')!, {
+      preventDefault: () => undefined,
+    })
+    fireEvent.click(await screen.findByRole('button', { name: 'Findings' }))
+    await waitFor(() => expect(screen.getByText('Findings (1)')).toBeInTheDocument())
+    fireEvent.click(screen.getByLabelText('Select finding PY001 at src/main.py:4'))
+    fireEvent.click(screen.getByRole('button', { name: 'Fix Findings' }))
+
+    expect(await screen.findByText('Repair provider quota or rate limit exceeded.')).toBeInTheDocument()
+  })
+
+  it('shows the backend error fallback when a Hotspots fix job fails', async () => {
+    configureCompletedRun()
+    fixtures.getLlmConfiguration.mockResolvedValue({ ...DEFAULT_LLM_CONFIGURATION, enabled: true })
+    fixtures.createFixJob.mockResolvedValue({
+      job_id: 'job-hotspots', analysis_id: 'analysis-1', status: 'failed',
+      branch_name: null, pull_request_url: null, error: null, error_message: null,
+    })
+    fixtures.getAnalysisFindings.mockResolvedValue([finding])
+    fixtures.getAnalysisHotspots.mockResolvedValue([insight])
+    fixtures.getAnalysisFiles.mockResolvedValue({ items: [insight], total: 1, limit: 100, offset: 0 })
+
+    render(<App />)
+    fireEvent.submit(screen.getByRole('button', { name: 'Analyze repository' }).closest('form')!, {
+      preventDefault: () => undefined,
+    })
+    fireEvent.click(await screen.findByRole('button', { name: 'Hotspots' }))
+    await waitFor(() => expect(screen.getByText('Hotspots (1)')).toBeInTheDocument())
+    fireEvent.click(screen.getByLabelText('Select hotspot src/main.py'))
+    fireEvent.click(screen.getByRole('button', { name: 'Fix Hotspots' }))
+
+    expect(await screen.findByText('Fix execution failed.')).toBeInTheDocument()
+  })
+
   it('filters findings by severity and type', async () => {
     configureCompletedRun()
     fixtures.getAnalysisFindings.mockResolvedValue(filterFindings)

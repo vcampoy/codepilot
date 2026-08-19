@@ -6,6 +6,7 @@ ports so Celery remains a delivery mechanism rather than business logic.
 
 from __future__ import annotations
 
+import re
 from collections.abc import Sequence
 from uuid import UUID
 
@@ -128,6 +129,17 @@ def _finding_evidence(finding: AnalysisFinding, finding_id: str) -> dict[str, ob
 
 def _safe_error(error: Exception) -> str:
     message = str(error).strip()
-    if not message or len(message) > 512:
+    if not message or len(message) > 512 or _contains_secret(message):
         return "Fix execution failed."
     return message
+
+
+def _contains_secret(message: str) -> bool:
+    return bool(
+        re.search(
+            r"(?i)(?:api[\s_-]?key|secret|password|token)\b\s*(?:provided|is|was|[:=])\s*\S+"
+            r"|bearer\s+[a-z0-9._-]+"
+            r"|(?:api[\s_-]?key|secret|password|token)\s*[:=]\s*\S+",
+            message,
+        )
+    )

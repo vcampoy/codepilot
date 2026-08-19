@@ -152,9 +152,7 @@ def test_finding_job_uses_configured_limit_and_unique_branch_suffix() -> None:
 
     async def scenario() -> None:
         fix_repository = InMemoryFixRepository()
-        await fix_repository.save_configuration(
-            FixConfiguration("default", max_findings_per_fix=1)
-        )
+        await fix_repository.save_configuration(FixConfiguration("default", max_findings_per_fix=1))
         queue = Queue()
         service = FixService(
             repo,

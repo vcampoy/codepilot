@@ -141,8 +141,7 @@ def test_github_client_publishes_blob_tree_commit_ref_and_pr() -> None:
         return responses.pop(0)
 
     result = asyncio.run(
-        GitHubClient(request=request)  # type: ignore[arg-type]
-        .publish_files(
+        GitHubClient(request=request).publish_files(  # type: ignore[arg-type]
             "acme/repo",
             base_sha="a" * 40,
             branch="fix-1",

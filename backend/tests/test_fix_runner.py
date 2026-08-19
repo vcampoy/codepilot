@@ -1,8 +1,11 @@
 import asyncio
 from datetime import UTC, datetime
 
+import pytest
+
 from codepilot.domain.analysis import AnalysisFinding, AnalysisStatus, fingerprint_finding
-from codepilot.domain.fixes import FixJobStatus
+from codepilot.domain.fixes import FixJobStatus, FixTargetType
+from codepilot.domain.insights import FileInsight
 from codepilot.domain.llm_config import LlmConfiguration
 from codepilot.repositories.analysis import InMemoryAnalysisRepository
 from codepilot.repositories.fixes import InMemoryFixRepository
@@ -107,5 +110,108 @@ def test_runner_marks_failed_without_publishing_when_verification_fails() -> Non
         assert result.status is FixJobStatus.FAILED
         assert result.pull_request_url is None
         assert publisher.calls == 0
+
+    asyncio.run(scenario())
+
+
+def test_runner_does_not_persist_provider_secrets_in_failure_message() -> None:
+    async def scenario() -> None:
+        analysis_repository = InMemoryAnalysisRepository()
+        analysis = await analysis_repository.create("https://github.com/acme/repo", "default")
+        analysis.status = AnalysisStatus.COMPLETED
+        analysis.commit_sha = "a" * 40
+        analysis_repository._records[analysis.analysis_id] = analysis
+        finding = AnalysisFinding("a.py", "R1", "high", "message", 1, 1)
+        finding_id = fingerprint_finding(finding)
+        analysis_repository._findings[analysis.analysis_id][finding_id] = finding
+        await analysis_repository.save_llm_configuration(
+            LlmConfiguration("default", True, "openai", "m", "secret", datetime.now(UTC))
+        )
+        fix_repository = InMemoryFixRepository()
+        job = await FixService(analysis_repository, fix_repository, Queue()).create_job(
+            analysis.analysis_id, (finding_id,), "default"
+        )
+
+        class LeakingGateway(Gateway):
+            async def generate_repair(self, _request: object) -> RepairResponse:
+                raise RuntimeError("api_key=super-secret")
+
+        runner = FixJobRunner(
+            analysis_repository,
+            fix_repository,
+            RepairExecutor(LeakingGateway(), Sandbox(), Publisher()),
+        )
+        await runner.run(job.job_id)
+        result = await fix_repository.get_job(job.job_id)
+        assert result is not None
+        assert result.status is FixJobStatus.FAILED
+        assert result.error_message == "Fix execution failed."
+        assert "super-secret" not in (result.error_message or "")
+
+    asyncio.run(scenario())
+
+
+def test_runner_redacts_natural_language_api_key_errors() -> None:
+    async def scenario() -> None:
+        analysis_repository = InMemoryAnalysisRepository()
+        analysis = await analysis_repository.create("https://github.com/acme/repo", "default")
+        analysis.status = AnalysisStatus.COMPLETED
+        analysis.commit_sha = "a" * 40
+        analysis_repository._records[analysis.analysis_id] = analysis
+        finding = AnalysisFinding("a.py", "R1", "high", "message", 1, 1)
+        finding_id = fingerprint_finding(finding)
+        analysis_repository._findings[analysis.analysis_id][finding_id] = finding
+        await analysis_repository.save_llm_configuration(
+            LlmConfiguration("default", True, "openai", "m", "secret", datetime.now(UTC))
+        )
+        fix_repository = InMemoryFixRepository()
+        job = await FixService(analysis_repository, fix_repository, Queue()).create_job(
+            analysis.analysis_id, (finding_id,), "default"
+        )
+
+        class LeakingGateway(Gateway):
+            async def generate_repair(self, _request: object) -> RepairResponse:
+                raise RuntimeError("Incorrect API key provided: sk-proj-secret")
+
+        runner = FixJobRunner(
+            analysis_repository,
+            fix_repository,
+            RepairExecutor(LeakingGateway(), Sandbox(), Publisher()),
+        )
+        await runner.run(job.job_id)
+        result = await fix_repository.get_job(job.job_id)
+        assert result is not None
+        assert result.error_message == "Fix execution failed."
+        assert "sk-proj-secret" not in (result.error_message or "")
+
+    asyncio.run(scenario())
+
+
+def test_runner_builds_and_validates_hotspot_evidence() -> None:
+    async def scenario() -> None:
+        analysis_repository = InMemoryAnalysisRepository()
+        analysis = await analysis_repository.create("https://github.com/acme/repo", "default")
+        lease_token = await analysis_repository.claim_running(analysis.analysis_id)
+        await analysis_repository.persist_file_insights(
+            analysis.analysis_id,
+            (FileInsight("src/main.py", 0.8, None, {}),),
+            lease_token=lease_token,
+        )
+        runner = FixJobRunner(
+            analysis_repository,
+            InMemoryFixRepository(),
+            RepairExecutor(Gateway(), Sandbox(), Publisher()),
+        )
+
+        evidence = await runner._evidence(
+            FixTargetType.HOTSPOT, ("src/main.py",), analysis.analysis_id
+        )
+        assert evidence == ({"path": "src/main.py", "hotspot_score": 0.8},)
+        with pytest.raises(RepairExecutionError, match="selected hotspots"):
+            await runner._evidence(FixTargetType.HOTSPOT, ("missing.py",), analysis.analysis_id)
+        with pytest.raises(RepairExecutionError, match="selected findings"):
+            await runner._evidence(
+                FixTargetType.FINDING, ("missing-finding",), analysis.analysis_id
+            )
 
     asyncio.run(scenario())
